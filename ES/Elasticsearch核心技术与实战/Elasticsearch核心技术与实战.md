@@ -101,6 +101,203 @@ elastic工程师认证：
 
 
 
-03 | Elasticsearch简介及其发展历史
+学习目标：
 
-04 | Elastic Stack家族成员及其应用场景
+<img src="Elasticsearch核心技术与实战.assets/image-20250210195533313.png" alt="image-20250210195533313" style="zoom: 50%;" />
+
+
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210195651219.png" alt="image-20250210195651219" style="zoom:50%;" />
+
+
+
+实战：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210195722730.png" alt="image-20250210195722730" style="zoom:50%;" />
+
+
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210195740286.png" alt="image-20250210195740286" style="zoom:50%;" />
+
+
+
+课程内容
+
+![image-20250210195811411](Elasticsearch核心技术与实战.assets/image-20250210195811411.png)
+
+
+
+建议
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210195944044.png" alt="image-20250210195944044" style="zoom:50%;" />
+
+
+
+## 03 | Elasticsearch简介及其发展历史
+
+从开源到上市：
+
+![image-20250210200052254](Elasticsearch核心技术与实战.assets/image-20250210200052254.png)
+
+
+
+es的客户：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210200137967.png" alt="image-20250210200137967" style="zoom:50%;" />
+
+
+
+简介：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210200215930.png" alt="image-20250210200215930" style="zoom:50%;" />
+
+https://db-engines.com/en/ranking
+
+> 20250210
+>
+> <img src="Elasticsearch核心技术与实战.assets/image-20250210200426909.png" alt="image-20250210200426909" style="zoom:50%;" />
+
+
+
+
+
+VS Solr：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210200525708.png" alt="image-20250210200525708" style="zoom:50%;" />
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210200556962.png" alt="image-20250210200556962" style="zoom:50%;" />
+
+
+
+诞生：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210200645705.png" alt="image-20250210200645705" style="zoom:50%;" />
+
+分布式架构：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210200734172.png" alt="image-20250210200734172" style="zoom:50%;" />
+
+
+
+支持多种方式集成接入：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210200804866.png" alt="image-20250210200804866" style="zoom:50%;" />
+
+https://www.elastic.co/guide/en/elasticsearch/client/index.html
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210201034365.png" alt="image-20250210201034365" style="zoom:50%;" />
+
+
+
+主要功能：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210201058706.png" alt="image-20250210201058706" style="zoom:50%;" />
+
+
+
+市场反应：
+
+![image-20250210201208324](Elasticsearch核心技术与实战.assets/image-20250210201208324.png)
+
+
+
+新特性：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210201301038.png" alt="image-20250210201301038" style="zoom:50%;" />
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210201352871.png" alt="image-20250210201352871" style="zoom:67%;" />
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210201428397.png" alt="image-20250210201428397" style="zoom:50%;" />
+
+
+
+
+
+总结：
+
+一款开源的搜索与分析引擎。
+
+
+
+## 04 | Elastic Stack家族成员及其应用场景
+
+Elastic Stack 生态圈：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210201619891.png" alt="image-20250210201619891" style="zoom:50%;" />
+
+
+
+Logstash：数据处理管道
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210201752197.png" alt="image-20250210201752197" style="zoom:50%;" />
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210201851858.png" alt="image-20250210201851858" style="zoom:67%;" />
+
+
+
+Kibana：可视化分析利器
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210201927918.png" alt="image-20250210201927918" style="zoom: 50%;" />
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210202017502.png" alt="image-20250210202017502" style="zoom:50%;" />
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210202046445.png" alt="image-20250210202046445" style="zoom:50%;" />
+
+
+
+BEATS-轻量的数据采集器：
+
+> go语言开发的
+
+![image-20250210202121527](Elasticsearch核心技术与实战.assets/image-20250210202121527.png)
+
+.
+
+X-Pack：商业化套件：
+
+![image-20250210202235424](Elasticsearch核心技术与实战.assets/image-20250210202235424.png)
+
+
+
+ELK客户及应用场景：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210202328535.png" alt="image-20250210202328535" style="zoom:50%;" />
+
+
+
+日志的重要性：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210202410620.png" alt="image-20250210202410620" style="zoom:50%;" />
+
+日志管理：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210202433885.png" alt="image-20250210202433885" style="zoom: 50%;" />
+
+
+
+
+
+ES与数据库的集成：
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210202512384.png" alt="image-20250210202512384" style="zoom:50%;" />
+
+
+
+指标分析/日志分析
+
+<img src="Elasticsearch核心技术与实战.assets/image-20250210202555093.png" alt="image-20250210202555093" style="zoom:50%;" />
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
