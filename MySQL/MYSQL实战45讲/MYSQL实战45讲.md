@@ -5391,6 +5391,348 @@ mysql> select * from table_a where b='1234567890abcd';
 评论区留言点赞板：
 
 >  @赖阿甘 提到了等号顺序问题，时间上MySQL优化器执行过程中，where 条件部分， a=b和 b=a的写法是一样的。
+>
+> @沙漠里的骆驼 提到了一个常见的问题。相同的模板语句，但是匹配行数不同，语句执行时 间相差很大。这种情况，在语句里面有order by这样的操作时会更明显。
+>
+> @Justin 回答了我们正文中的问题，如果id 的类型是整数，传入的参数类型是字符串的时候， 可以用上索引
+
+
+
+
+
+# 19 | 为什么我只查一行的语句，也执行这么慢？
+
+一般情况下，如果我跟你说查询性能优化，你首先会想到一些复杂的语句，想到查询需要返回大 量的数据。但有些情况下，“查一行”，也会执行得特别慢。今天，我就跟你聊聊这个有趣的话 题，看看什么情况下，会出现这个现象。
+
+
+
+需要说明的是，如果MySQL数据库本身就有很大的压力，导致数据库服务器CPU占用率很高或 ioutil（IO利用率）很高，这种情况下所有语句的执行都有可能变慢，不属于我们今天的讨论范 围。
+
+
+
+为了便于描述，我还是构造一个表，基于这个表来说明今天的问题。这个表有两个字段id和c， 并且我在里面插入了10万行记录。
+
+```sql
+mysql> CREATE TABLE `t` (
+    `id` int(11) NOTNULL,
+    `c` int(11) DEFAULTNULL,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB;
+
+
+delimiter ;;
+create procedure idata()
+begin
+    declare i int;
+    set i=1;
+    while(i<=100000)do
+        insert into t values(i,i);
+        set i=i+1;
+    end while;
+end;;
+delimiter ;
+call idata();
+```
+
+> 补充：
+
+1. 查看所有存储过程：
+
+```
+SHOW PROCEDURE STATUS;
+```
+
+这将显示数据库中所有存储过程的信息，包括名称、创建时间等。
+
+1. 查看特定存储过程的定义：
+
+```
+SHOW CREATE PROCEDURE procedure_name;
+```
+
+将 `procedure_name` 替换为要查看的存储过程的名称。这将显示指定存储过程的完整定义。
+
+1. 删除存储过程：
+
+```
+DROP PROCEDURE IF EXISTS procedure_name;
+```
+
+
+
+接下来，我会用几个不同的场景来举例，有些是前面的文章中我们已经介绍过的知识点，你看看 能不能一眼看穿，来检验一下吧。
+
+
+
+## 第一类：查询长时间不返回
+
+如图1所示，在表t执行下面的SQL语句：
+
+```
+mysql> select * from t where id=1;
+
+```
+
+查询结果长时间不返回。
+
+<img src="MYSQL实战45讲.assets/image-20250219113617178.png" alt="image-20250219113617178" style="zoom:50%;" />
+
+一般碰到这种情况的话，大概率是表t被锁住了。接下来分析原因的时候，一般都是首先执行一 下`show processlist`命令，看看当前语句处于什么状态。
+
+然后我们再针对每种状态，去分析它们产生的原因、如何复现，以及如何处理。
+
+
+
+### 等MDL锁
+
+如图2所示，就是使用showprocesslist命令查看Waiting for table metadata lock的示意图。
+
+<img src="MYSQL实战45讲.assets/image-20250219113745848.png" alt="image-20250219113745848" style="zoom:50%;" />
+
+出现这个状态表示的是，现在有一个线程正在表t上请求或者持有MDL写锁，把select语句堵住了。
+
+在第6篇文章《全局锁和表锁 ：给表加个字段怎么有这么多阻碍？》中，我给你介绍过一种复现方法。但需要说明的是，那个复现过程是基于MySQL 5.6版本的。而MySQL 5.7版本修改了MDL 的加锁策略，所以就不能复现这个场景了。
+
+不过，在MySQL 5.7版本下复现这个场景，也很容易。如图3所示，我给出了简单的复现步骤。
+
+```sql
+lock table t write;
+
+==>
+UNLOCK TABLES; //释放所有锁定的表
+```
+
+<img src="MYSQL实战45讲.assets/image-20250219113936727.png" alt="image-20250219113936727" style="zoom:50%;" />
+
+session A 通过lock table命令持有表t的MDL写锁，而session B的查询需要获取MDL读锁。所 以，session B进入等待状态。
+
+这类问题的处理方式，就是找到谁持有MDL写锁，然后把它kill掉。
+
+但是，由于在showprocesslist的结果里面，session A的Command列是“Sleep”，导致查找起来 很不方便。不过有了performance_schema和sys系统库以后，就方便多了。（MySQL启动时需 要设置performance_schema=on，相比于设置为off会有10%左右的性能损失)。
+
+通过查询sys.schema_table_lock_waits这张表，我们就可以直接找出造成阻塞的process id，把 这个连接用kill 命令断开即可。
+
+<img src="MYSQL实战45讲.assets/image-20250219114215096.png" alt="image-20250219114215096" style="zoom:67%;" />
+
+```
+select blocking_pid from sys.schema_table_lock_waits;
+```
+
+
+
+### 等flush
+
+接下来，我给你举另外一种查询被堵住的情况。 我在表t上，执行下面的SQL语句：
+
+```
+mysql> select * from information_schema.processlist where id=1;
+```
+
+你可以看一下图5。我查出来这个线程的状态是Waiting for table flush，你可以设想一下这是什 么原因。
+
+<img src="MYSQL实战45讲.assets/image-20250219120307433.png" alt="image-20250219120307433" style="zoom:67%;" />
+
+这个状态表示的是，现在有一个线程正要对表t做flush操作。MySQL里面对表做flush操作的用 法，一般有以下两个：
+
+```sql
+flush tables t with read lock;
+flush tables with read lock;
+```
+
+这两个flush语句，如果指定表t的话，代表的是只关闭表t；如果没有指定具体的表名，则表示关 闭MySQL里所有打开的表。
+
+但是正常这两个语句执行起来都很快，除非它们也被别的线程堵住了。
+
+所以，出现Waiting for table flush状态的可能情况是：有一个flush tables命令被别的语句堵住了，然后它又堵住了我们的select语句。
+
+现在，我们一起来复现一下这种情况，复现步骤如图6所示：
+
+<img src="MYSQL实战45讲.assets/image-20250219120508511.png" alt="image-20250219120508511" style="zoom:50%;" />
+
+
+
+在session A中，我故意每行都调用一次sleep(1)，这样这个语句默认要执行10万秒（对10W条记录执行休眠1s），在这期间表 t一直是被session A“打开”着。然后，session B的flush tables t命令再要去关闭表t，就需要等 session A的查询结束。这样，session C要再次查询的话，就会被flush 命令堵住了。
+
+图7是这个复现步骤的showprocesslist结果。这个例子的排查也很简单，你看到这个show processlist的结果，肯定就知道应该怎么做了。
+
+<img src="MYSQL实战45讲.assets/image-20250219120728166.png" alt="image-20250219120728166" style="zoom:67%;" />
+
+### 等行锁
+
+现在，经过了表级锁的考验，我们的select 语句终于来到引擎里了。
+
+```
+mysql> select * from t where id=1 lock in share mode;
+```
+
+> 共享锁（Shared Lock）是一种读取锁，它允许多个会话同时获取共享锁并读取数据，但阻止其他会话对同一数据进行写操作。这意味着其他会话可以同时读取被共享锁保护的数据，但不能修改它。
+>
+> 在执行这个查询语句时，如果其他会话已经对满足条件的数据行持有排他锁（Exclusive Lock），那么当前会话将会等待，直到排他锁被释放。如果没有其他会话持有排他锁，当前会话将获取共享锁并读取数据。
+
+上面这条语句的用法你也很熟悉了，我们在第8篇《事务到底是隔离的还是不隔离的？》文章介 绍当前读时提到过。 
+
+由于访问id=1这个记录时要加读锁，如果这时候已经有一个事务在这行记录上持有一个写锁，我 们的select语句就会被堵住。
+
+复现步骤和现场如下：
+
+<img src="MYSQL实战45讲.assets/image-20250219121313178.png" alt="image-20250219121313178" style="zoom:50%;" />
+
+
+
+<img src="MYSQL实战45讲.assets/image-20250219121513028.png" alt="image-20250219121513028" style="zoom: 67%;" />
+
+显然，session A启动了事务，占有写锁，还不提交，是导致session B被堵住的原因。
+
+这个问题并不难分析，但问题是怎么查出是谁占着这个写锁。如果你用的是MySQL 5.7版本，可 以通过sys.innodb_lock_waits 表查到。
+
+```sql
+mysql> select * from sys.innodb_lock_waits where locked_table='`test`.`t`'\G;
+```
+
+<img src="MYSQL实战45讲.assets/image-20250219121857983.png" alt="image-20250219121857983" style="zoom:50%;" />
+
+可以看到，这个信息很全，4号线程是造成堵塞的罪魁祸首。而干掉这个罪魁祸首的方式，就是 KILLQUERY 4或KILL 4。
+
+不过，这里不应该显示“KILLQUERY 4”。这个命令表示停止4号线程当前正在执行的语句，而这 个方法其实是没有用的。因为占有行锁的是update语句，这个语句已经是之前执行完成了的， 现在执行KILLQUERY，无法让这个事务去掉id=1上的行锁。
+
+
+
+实际上，**KILL 4才有效**，也就是说直接断开这个连接。**这里隐含的一个逻辑就是，连接被断开的 时候，会自动回滚这个连接里面正在执行的线程，也就释放了id=1上的行锁**。
+
+
+
+## 第二类：查询慢
+
+经过了重重封“锁”，我们再来看看一些查询慢的例子。
+
+先来看一条你一定知道原因的SQL语句：
+
+```
+select * from t where c=50000 limit 1;
+```
+
+由于字段c上没有索引，这个语句只能走id主键顺序扫描，因此需要扫描5万行。
+
+作为确认，你可以看一下慢查询日志。注意，这里为了把所有语句记录到slowlog里，我在连接 后先执行了 set long_query_time=0，将慢查询日志的时间阈值设置为0。
+
+<img src="MYSQL实战45讲.assets/image-20250219122119634.png" alt="image-20250219122119634" style="zoom:50%;" />
+
+
+
+Rows_examined显示扫描了50000行。你可能会说，不是很慢呀，11.5毫秒就返回了，我们线上 一般都配置超过1秒才算慢查询。但你要记住：坏查询不一定是慢查询。我们这个例子里面只 有10万行记录，数据量大起来的话，执行时间就线性涨上去了。
+
+扫描行数多，所以执行慢，这个很好理解。
+
+
+
+但是接下来，我们再看一个只扫描一行，但是执行很慢的语句。
+
+如图12所示，是这个例子的slowlog。可以看到，执行的语句是
+
+```
+mysql> select * from t where id=1；
+```
+
+虽然扫描行数是1，但执行时间却长达800毫秒。
+
+<img src="MYSQL实战45讲.assets/image-20250219200808825.png" alt="image-20250219200808825" style="zoom:67%;" />
+
+是不是有点奇怪呢，这些时间都花在哪里了？
+
+如果我把这个slowlog的截图再往下拉一点，你可以看到下一个语句，select *fromt where id=1 lock in share mode，执行时扫描行数也是1行，执行时间是0.2毫秒。
+
+<img src="MYSQL实战45讲.assets/image-20250219200849354.png" alt="image-20250219200849354" style="zoom:67%;" />
+
+可能有的同学已经有答案了。如果你还没有答案的话，我再给你一个提示信息，图14是这两个语句的执行输出结果。
+
+<img src="MYSQL实战45讲.assets/image-20250219200929025.png" alt="image-20250219200929025" style="zoom:50%;" />
+
+
+
+第一个语句的查询结果里c=1，带lock in share mode的语句返回的是c=1000001。看到这里应该 有更多的同学知道原因了。如果你还是没有头绪的话，也别着急。我先跟你说明一下复现步骤， 再分析原因。
+
+<img src="MYSQL实战45讲.assets/image-20250219200959322.png" alt="image-20250219200959322" style="zoom:50%;" />
+
+你看到了，session A先用start transaction with consistent snapshot命令启动了一个事务，之后 session B才开始执行update 语句。
+
+session B执行完100万次update语句后，id=1这一行处于什么状态呢？你可以从图16中找到答案。
+
+<img src="MYSQL实战45讲.assets/image-20250219201035004.png" alt="image-20250219201035004" style="zoom:50%;" />
+
+session B更新完100万次，生成了100万个回滚日志(undo log)。
+
+带lock in share mode的SQL语句，是当前读，因此会直接读到1000001这个结果，所以速度很快；而select *fromt where id=1这个语句，是一致性读，因此需要从1000001开始，依次执行 undo log，执行了100万次以后，才将1这个结果返回。
+
+注意，undo log里记录的其实是“把2改成1”，“把3改成2”这样的操作逻辑，画成减1的目的是方便你看图。
+
+
+
+## 小结
+
+今天我给你举了在一个简单的表上，执行“查一行”，可能会出现的被锁住和执行慢的例子。这其 中涉及到了表锁、行锁和一致性读的概念。
+
+在实际使用中，碰到的场景会更复杂。但大同小异，你可以按照我在文章中介绍的定位方法，来定位并解决问题。
+
+
+
+### 思考题
+
+我们在举例加锁读的时候，用的是这个语句，select *fromt where id=1 lock in share mode。由于id上有索引，所以可以直接定位到id=1这一行，因此读锁也是只加在了这一行上。
+
+但如果是下面的SQL语句，
+
+```sql
+begin;
+select * from t where c=5 for update;
+commit;
+```
+
+这个语句序列是怎么加锁的呢？加的锁又是什么时候释放呢？
+
+> 回答
+
+在21的开头回答了这期问题。有同学的回答中还说明了读提交隔离级别下，在语句执行完 成后，是只有行锁的。而且语句执行完成后，InnoDB就会把不满足条件的行行锁去掉。
+
+当然了，c=5这一行的行锁，还是会等到commit的时候才释放的。
+
+
+
+# 20 | 幻读是什么，幻读有什么问题？
+
+在上一篇文章最后，我给你留了一个关于加锁规则的问题。今天，我们就从这个问题说起吧。
+
+为了便于说明问题，这一篇文章，我们就先使用一个小一点儿的表。建表和初始化语句如下（为 了便于本期的例子说明，我把上篇文章中用到的表结构做了点儿修改）：
+
+```sql
+CREATE TABLE `t` (
+    `id` int(11) NOTNULL,
+    `c` int(11) DEFAULTNULL,
+    `d` int(11) DEFAULTNULL,
+    PRIMARY KEY (`id`),
+    KEY `c` (`c`)
+) ENGINE=InnoDB;
+insert into t values(0,0,0),(5,5,5),
+(10,10,10),(15,15,15),(20,20,20),(25,25,25);
+
+```
+
+这个表除了主键id外，还有一个索引c，初始化语句在表中插入了6行数据。
+
+上期我留给你的问题是，下面的语句序列，是怎么加锁的，加的锁又是什么时候释放的呢？
+
+```sql
+begin;
+select * from t where d=5 for update;
+commit;
+```
+
+
+
+比较好理解的是，这个语句会命中d=5的这一行，对应的主键id=5，因此在select 语句执行完成 后，id=5这一行会加一个写锁，而且由于两阶段锁协议，这个写锁会在执行commit语句的时候释放。
+
+**由于字段d上没有索引，因此这条查询语句会做全表扫描。那么，其他被扫描到的，但是不满足条件的5行记录上，会不会被加锁呢**？ (会？)
+
+我们知道，InnoDB的默认事务隔离级别是可重复读，所以本文接下来没有特殊说明的部分，都 是设定在可重复读隔离级别下。
 
 
 
