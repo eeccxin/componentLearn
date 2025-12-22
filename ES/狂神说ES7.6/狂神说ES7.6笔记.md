@@ -110,7 +110,9 @@ Elasticsearch BV成立于2012年，主要围绕Elasticsearch及相关软件提�
 > 狂神聊ElasticSearch（库/表/文档记录（7.6后不建议使用文档API）
 
 版本:**ElasticSearch 7.6.1**(全网最新7，2020.4.1号)
-6.X 7.X的区别十分大.6.x的API(原生API, RestFul高级!
+6.X 7.X的区别十分大.
+
+6.x的API(原生API）, RestFul高级!
 
 官网：https://www.elastic.co/cn/downloads/elasticsearch
 
@@ -119,6 +121,10 @@ Elasticsearch BV成立于2012年，主要围绕Elasticsearch及相关软件提�
 2021,02,21 最新版本为：
 
 ![image-20210221153158022](狂神说ES7.6笔记.assets/image-20210221153158022.png)
+
+2025.12.22 的最新版本是9.2.3：
+
+<img src="狂神说ES7.6笔记.assets/image-20251222195347019.png" alt="image-20251222195347019" style="zoom: 33%;" />
 
 
 
@@ -941,7 +947,7 @@ elasticsearch在后台把**每个索引划分成多个分片**。每分分片可
 
 -   可以是**层次型的**，一个文档中包含自文档，复杂的逻辑实体就是这么来的!（套娃，就是一个json对象，可以**使用fastjson**进行自动转换）
 
--   灵活的结构，**文档不依赖预先定义的模式**，我们知道关系型数据库中，要提前定义字段才能使用。在elasticsearch中，对于字段是非常灵活的。有时候，我们可以忽略该字段，或者动态的添加一个新的字段。
+-   灵活的结构，**文档不依赖预先定义的模式**，我们知道关系型数据库中，要提前定义字段才能使用。在elasticsearch中，对于字段是非常灵活的。有时候，我们可以忽略该字段，或者动态的添加一个新的字段（开启严格模式可以禁止自动创建字段）。
 
     
 
@@ -1020,7 +1026,9 @@ To forever, study every day, good good up #一文档2包含的内容
 
 在elasticsearch中.索引(库)这个词被频繁使用，这就是术语的使用.**在elasticsearch中索引被分为多个分片，每个分片是一个Lucene索引**。
 
-所以**一个elasticsearch索引是由多个Lucene索引组成的**.别问为什么，谁让elasticsearch使用Lucene作为底层呢!如无特指。**说起索引都是指elasticsearch的索引.**接下来的一切操作都在**kibana中Dev Tools下的Console**里完成.
+所以**一个elasticsearch索引是由多个Lucene索引组成的**.
+
+别问为什么，谁让elasticsearch使用Lucene作为底层呢!如无特指。**说起索引都是指elasticsearch的索引.**接下来的一切操作都在**kibana中Dev Tools下的Console**里完成.
 
 基础操作!
 
@@ -1059,6 +1067,43 @@ IK提供了两个分词算法**:==ik_smart和ik_max_word==**.其中ik_smart为�
 ![image-20210221223923791](狂神说ES7.6笔记.assets/image-20210221223923791.png)
 
 ![image-20210221224022712](狂神说ES7.6笔记.assets/image-20210221224022712.png)
+
+```bash
+GET _analyze 
+{
+  "analyzer": "ik_smart",
+  "text": "我爱es"
+}
+
+==》
+{
+  "tokens" : [
+    {
+      "token" : "我",
+      "start_offset" : 0,
+      "end_offset" : 1,
+      "type" : "CN_CHAR",
+      "position" : 0
+    },
+    {
+      "token" : "爱",
+      "start_offset" : 1,
+      "end_offset" : 2,
+      "type" : "CN_CHAR",
+      "position" : 1
+    },
+    {
+      "token" : "es",
+      "start_offset" : 2,
+      "end_offset" : 4,
+      "type" : "ENGLISH",
+      "position" : 2
+    }
+  ]
+}
+```
+
+
 
 - 将一个text分成一个个词片token
 - token、start_offset、end_offset、type、position是啥？
@@ -1112,7 +1157,40 @@ GET _analyze
 
 ```
 
+#### 查看安装的插件
 
+```bash
+# 查看所有已安装的插件（包含分词器插件）
+GET _cat/plugins?v
+
+==>
+name                component          version
+1658994689002556332 analysis-ik        7.10.1
+1658994689002556332 analysis-pinyin    7.10.1
+1658994689002556332 analysis-stconvert 7.10.1
+1658994689002556332 opack              7.10.1_es7.10.1
+1658994689002556332 repository-cos     7.10.1
+1658994689002556332 sql                7.10.1.0
+1658994689002556232 analysis-ik        7.10.1
+1658994689002556232 analysis-pinyin    7.10.1
+1658994689002556232 analysis-stconvert 7.10.1
+1658994689002556232 opack              7.10.1_es7.10.1
+1658994689002556232 repository-cos     7.10.1
+1658994689002556232 sql                7.10.1.0
+
+
+# 或者查看节点插件
+GET _nodes/plugins?pretty
+==>
+```
+
+<img src="狂神说ES7.6笔记.assets/image-20251222201728341.png" alt="image-20251222201728341" style="zoom:50%;" />
+
+
+
+
+
+#### 自定义词典
 
 > 添加分词规则--为了使得自己想要的词不被分开（如：狂神说），可以自定义字典
 
@@ -1150,6 +1228,30 @@ GET _analyze
 以后的话，我们需要自己配置分词就在自己定义的dic文件中进行配置即可!
 
 问题：如果有多个字典，怎么写？用什么分隔符？|吗？
+
+
+
+#### 内置分词器
+
+### **ES 内置的标准分词器：**
+
+| 分词器          | 描述                             | 适用场景   |
+| --------------- | -------------------------------- | ---------- |
+| **standard**    | 标准分词器，按单词边界分词       | 通用文本   |
+| simple          | 简单分词器，遇到非字母字符就分割 | 简单文本   |
+| **whitespace**  | 空白字符分词器                   | 空格分割   |
+| **stop**        | 停用词分词器，移除常见停用词     | 文本分析   |
+| **keyword**     | 不分词，整个文本作为一个词元     | 精确匹配   |
+| **pattern**     | 正则表达式分词器                 | 自定义规则 |
+| **fingerprint** | 指纹分词器，去重和排序           | 重复检测   |
+
+### **语言特定分词器（如果支持）：**
+
+- **english** - 英文分词器
+- **chinese** - 中文分词器（需要插件）✅️
+- **french** - 法文分词器
+- **german** - 德文分词器
+- 等等...
 
 
 
