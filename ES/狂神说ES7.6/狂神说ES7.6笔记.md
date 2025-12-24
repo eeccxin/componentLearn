@@ -1257,7 +1257,9 @@ GET _nodes/plugins?pretty
 
 ## 3.3、Rest风格说明
 
-​		一种软件架构风格，而不是标准，只是**提供了一组设计原则和约束条件**。它主要用于客户端和服务器交互类的软件。基于这个风格设计的软件**可以更简洁、更有层次，更易于实现缓存等机制**。
+​		一种软件架构风格，而不是标准，只是**提供了一组设计原则和约束条件**。
+
+​		它主要用于客户端和服务器交互类的软件。基于这个风格设计的软件**可以更简洁、更有层次，更易于实现缓存等机制**。
 
 ### 1、基本Rest命令说明：
 
@@ -1276,22 +1278,291 @@ GET _nodes/plugins?pretty
 > 例子：
 
 ```json
-PUT /test/user/2
+
+PUT /test/_doc/1  
 {
 "name": "狂神说java",
 "age" : 10,
 "desc": "还行",
 "tags": ["技术宅","帅哥","渣男"]
 }
+
+
+ES 7.0将中间的type固定为_doc的主要原因：
+技术层面：
+✅ 解决Lucene底层限制​ - 多type导致的字段冲突
+✅ 提升性能​ - 简化存储结构，提高查询速度
+✅ 优化存储​ - 更好的数据压缩效率
+设计层面：
+✅ 简化数据模型​ - 索引→文档的两层结构
+✅ 明确职责分离​ - 一个索引一种文档类型
+✅ 便于扩展维护​ - 索引级别更容易扩展和管理
 ```
 
 > 运行结果：
 
-完成了**自动增加索引**!数据也成功的添加了，这就是我说大家在初期可以把ES当做数据库学习的原因!
+完成了**自动增加索引**!
+
+数据也成功的添加了，这就是我说大家在初期可以把ES当做数据库学习的原因!
 
 ![image-20210221232020823](狂神说ES7.6笔记.assets/image-20210221232020823.png)
 
 ![image-20210221232743206](狂神说ES7.6笔记.assets/image-20210221232743206.png)
+
+
+
+```json
+"_index" : "test",           // 索引名称
+"_type" : "_doc",            // 文档类型
+"_id" : "1",                 // 文档ID
+"_version" : 2,              // 版本号
+"result" : "updated",        // 操作结果 created updated deleted not_found
+"_shards" : {
+  "total" : 2,        // 总分片数 = 主分片 + 副本分片
+  "successful" : 2,   // 成功写入的分片数
+  "failed" : 0       // 写入失败的分片数
+}
+
+  "_seq_no" : 1,           // 序列号（分片级别，每次操作递增）
+  "_primary_term" : 1      // 主分片任期（主分片切换时递增）
+
+```
+
+
+
+##### GET数据
+
+```json
+GET /test/_doc/1
+
+{
+  "_index" : "test",
+  "_type" : "_doc",
+  "_id" : "1",
+  "_version" : 9,
+  "_seq_no" : 8,
+  "_primary_term" : 1,
+  "found" : true,
+  "_source" : {
+    "name" : "狂神说java",
+    "age" : 10,
+    "desc" : "还行",
+    "tags" : [
+      "技术宅",
+      "帅哥",
+      "渣男"
+    ]
+  }
+}
+
+```
+
+<img src="狂神说ES7.6笔记.assets/image-20251224201437753.png" alt="image-20251224201437753" style="zoom: 67%;" />
+
+##### GET 索引元数据
+
+```json
+PUT /test2
+{
+  "mappings": {
+    "properties": {
+      "name":{
+        "type": "text"
+      },
+      "age":{
+        "type": "long"
+      },
+      "birthday":{
+        "type": "date"
+      }
+      
+    }
+  }
+}
+
+GET test2
+{
+  "test2": {
+    "aliases": {}, // 索引别名（当前无别名）
+    "mappings": {
+      "dynamic_templates": [ // 动态字段映射模板
+        {
+          "message_full": {
+            "match": "message_full", // 匹配字段名包含"message_full"
+            "mapping": {
+              "fields": {
+                "keyword": {
+                  "ignore_above": 2048, // 超过2048字符不索引
+                  "type": "keyword" // 精确匹配类型（图片中的字符串类型）
+                }
+              },
+              "type": "text" // 全文搜索类型（图片中的字符串类型）
+            }
+          }
+        },
+        {
+          "message": {
+            "match": "message", // 匹配字段名包含"message"
+            "mapping": {
+              "type": "text" // 全文搜索类型
+            }
+          }
+        },
+        {
+          "strings": {
+            "match_mapping_type": "string", // 匹配所有字符串类型字段
+            "mapping": {
+              "type": "keyword" // 精确匹配类型
+            }
+          }
+        }
+      ],
+      "properties": { // 显式定义的字段映射
+        "age": {
+          "type": "long" // 长整型（图片中的数值类型）
+        },
+        "birthday": {
+          "type": "date" // 日期类型（图片中的日期类型）
+        },
+        "name": {
+          "type": "text" // 全文搜索类型（图片中的字符串类型）
+        }
+      }
+    },
+    "settings": { // 索引设置
+      "index": {
+        "routing": {
+          "allocation": {
+            "include": {
+              "_tier_preference": "data_content" // 数据分布策略
+            }
+          }
+        },
+        "refresh_interval": "30s", // 索引刷新间隔
+        "number_of_shards": "1", // 主分片数量
+        "translog": { // 事务日志设置
+          "sync_interval": "5s", // 同步间隔
+          "durability": "async" // 持久化方式（异步）
+        },
+        "provided_name": "test2", // 索引名称
+        "max_result_window": "65536", // 最大返回结果数
+        "creation_date": "1766577323759", // 创建时间戳
+        "unassigned": { // 未分配分片处理
+          "node_left": {
+            "delayed_timeout": "5m" // 节点离开等待超时
+          }
+        },
+        "number_of_replicas": "1", // 副本分片数量
+        "uuid": "xxxxcygXT5KefBgr8rJQHQ", // 索引唯一标识
+        "version": {
+          "created": "7100199" // ES版本号（7.10.1）
+        }
+      }
+    }
+  }
+}
+```
+
+###### mapping部分
+
+> 动态模板（dynamic_templates）
+
+```json
+"dynamic_templates": [
+  {
+    "message_full": {                  // 模板1：处理message_full字段（全匹配字段message_full）
+      "match": "message_full",   // 关键看这个匹配模式
+      "mapping": {
+        "type": "text",                // 主字段为text类型
+        "fields": {
+          "keyword": {                 // 子字段为keyword类型
+            "type": "keyword",
+            "ignore_above": 2048       // 超过2048字符不索引
+          }
+        }
+      }
+    }
+  },
+  {
+    "message": {                       // 模板2：处理message字段  
+      "match": "message",
+      "mapping": {
+        "type": "text"                 // 简单text类型
+      }
+    }
+  },
+  {
+    "strings": {                       // 模板3：默认字符串处理
+      "match_mapping_type": "string",  // 匹配所有字符串字段
+      "mapping": {
+        "type": "keyword"              // 默认转为keyword类型
+      }
+    }
+  }
+]
+```
+
+修改字段模板？
+
+跟新增字段一样用_mapping：
+
+**修改现有字段：**
+
+```json
+PUT /索引名/_mapping
+{
+  "properties": {
+    "字段名": {
+      "type": "新类型",    // 参考图片中的数据类型
+      "新增参数": "值"
+    }
+  }
+}
+```
+
+**新增动态模板：**
+
+```json
+PUT /索引名/_mapping  
+{
+  "dynamic_templates": [
+    {
+      "模板名称": {
+        "match": "匹配模式",
+        "mapping": {
+          "type": "数据类型"  // 使用图片中的类型
+        }
+      }
+    }
+  ]
+}
+```
+
+
+
+
+
+> properties 
+
+```
+  "properties" : {
+        "age" : {
+          "type" : "long"
+        },
+        "birthday" : {
+          "type" : "date"
+        },
+        "name" : {
+          "type" : "text"
+        }
+      }
+```
+
+
+
+###### 设置部分（settings）
+
+
 
 
 
@@ -1307,10 +1578,48 @@ PUT /test/user/2
 
 ![image-20210221232910622](狂神说ES7.6笔记.assets/image-20210221232910622.png)
 
-- **没有字符类型**
+- **没有字符string类型** ==》 keyword和text 
 - 数值类型比java多了两种浮点的、类型
 - date
 - binary 二进制类型
+
+
+
+##### 常用数据类型
+
+**1. 字符串类型**
+
+- **text** - 全文搜索类型（分词处理，适合内容检索）
+- **keyword** - 精确匹配类型（不分词，适合过滤、聚合、排序）
+
+**2. 数值类型**
+
+| 类型             | 范围       | 适用场景     |
+| ---------------- | ---------- | ------------ |
+| **long**         | 64位整数   | 大范围整数值 |
+| **integer**      | 32位整数   | 一般整数     |
+| **short**        | 16位整数   | 小范围整数   |
+| **byte**         | 8位整数    | 微小整数值   |
+| **double**       | 双精度浮点 | 高精度小数   |
+| **float**        | 单精度浮点 | 普通小数     |
+| **half_float**   | 半精度浮点 | 节省存储空间 |
+| **scaled_float** | 缩放浮点   | 固定精度小数 |
+
+**3. 日期类型**
+
+- **date** - 日期时间类型（支持多种格式）
+
+**4. 布尔类型**
+
+- **boolean** - 真假值（true/false）
+
+**5. 二进制类型**
+
+- **binary** - 存储二进制数据（如图片、文件）
+
+
+
+##### 创建索引规则 mappings
 
 > 使用PUT指定属性类型--创建索引规则：
 
@@ -1365,13 +1674,13 @@ PUT /test2
 ![image-20210221234830039](狂神说ES7.6笔记.assets/image-20210221234830039.png)
 
 ```json
-POST /test/user/2/_update
+POST /test/_doc/2/_update
 {
   "doc":{
     "name":"abw"
   }
   
-  }
+}
 ```
 
 ![image-20210221235030988](狂神说ES7.6笔记.assets/image-20210221235030988.png)
@@ -1393,13 +1702,17 @@ POST /test/user/2/_update
 
 #### 5）没有select
 
+其实就是GET 以及 search
+
+
+
 
 
 ### 3、关于文档的基本操作（重点）
 
 #### 1）GET id 指定id查询
 
-> 存在：
+> 存在：看found字段
 
 ![image-20210222001315082](狂神说ES7.6笔记.assets/image-20210222001315082.png)
 
@@ -1463,6 +1776,10 @@ POST /test/user/2/_update
 
 - 注意：前面的url只到类型（表）一级，相当于查表
 
+```
+GET /test/_doc/_search?q=name:abw
+```
+
 ![image-20210222002322341](狂神说ES7.6笔记.assets/image-20210222002322341.png)
 
 > 匹配不到
@@ -1474,8 +1791,6 @@ POST /test/user/2/_update
 
 
 #### 3）复杂操作搜索（排序/分页/高亮/模糊查询/精准查询）
-
-
 
 > 创建数据：
 
@@ -1490,6 +1805,19 @@ POST /test/user/2/_update
 ![image-20210222002910074](狂神说ES7.6笔记.assets/image-20210222002910074.png)
 
 ![image-20210222003936688](狂神说ES7.6笔记.assets/image-20210222003936688.png)
+
+
+
+```
+GET /test/_doc/_search
+{
+  "query": {
+    "match": {
+      "name":"abw"
+    }
+  }
+}
+```
 
 
 
@@ -1521,8 +1849,6 @@ POST /test/user/2/_update
 
 数据下标还是从0开始的，和学的所有数据结构是一样的!
 /search/{current}/{pagesize}
-
-
 
 > 布尔值查询--bool
 
@@ -1588,7 +1914,25 @@ POST /test/user/2/_update
 
 
 
-> 高亮查询 highlight
+##### 高亮查询 highlight
+
+```json
+GET /test/_doc/_search
+{
+  "query": {
+    "match": {
+      "name":"abw"
+    }
+  },
+  "highlight" : {
+    "pre_tags": "<p>",
+    "post_tags": "</p>",
+    "fields":{
+      "name":{}
+    }
+  }
+}
+```
 
 ![image-20210222020046318](狂神说ES7.6笔记.assets/image-20210222020046318.png)
 
@@ -1956,10 +2300,61 @@ GET test/doc/_search
 
 
 
-作者：f22448cd5541
-链接：https://www.jianshu.com/p/d5583dff4157
-来源：简书
-著作权归作者所有。商业转载请联系作者获得授权，非商业转载请注明出处。
+### 4、其他指令
+
+#### 1、查询版本号
+
+```
+GET /
+
+{
+  "name" : "11118994689002556232",
+  "cluster_name" : "es-gzrr8l06",
+  "cluster_uuid" : "xxxxxEiSRnW_19CvGgGmFA",
+  "version" : {
+    "number" : "7.10.1",
+    "build_flavor" : "default",
+    "build_type" : "tar",
+    "build_hash" : "xxxxx511f798e4d23625ffa92ccf5c44840e2650",
+    "build_date" : "2021-12-22T12:45:12.223537200Z",
+    "build_snapshot" : false,
+    "lucene_version" : "8.7.0",
+    "minimum_wire_compatibility_version" : "6.8.0",
+    "minimum_index_compatibility_version" : "6.0.0-beta1"
+  },
+  "tagline" : "You Know, for Search"
+}
+
+```
+
+
+
+#### 2、查询所有索引
+
+```bash
+GET _cat/indices?v
+
+health status index                           uuid                   pri rep docs.count docs.deleted store.size pri.store.size
+green  open   .triggered_watches              xxxx8zdoS_i4bCZy-0wBYA   1   1          0            1    290.7mb        142.7mb
+green  open   test2023                        xxxxdkYXR9y1p-9sxna7Vg   1   1          6            1     48.7kb         24.9kb
+
+# 只查看index列（即name） h = headers s = sort（按指定字段排序）
+GET _cat/indices?h=index&s=index
+└─┬─┘ └──┬──┘ └─┬─┘ └─┬─┘
+  │      │      │     │
+  │      │      │     └─ 排序参数（s=index）
+  │      │      │
+  │      │      └─ 字段筛选参数（h=index）
+  │      │
+  │      └─ 索引相关的cat API
+  │
+  └─ cat API前缀（集群管理API）
+
+```
+
+
+
+
 
 # 4、集成springboot
 
