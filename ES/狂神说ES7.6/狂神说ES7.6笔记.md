@@ -1,7 +1,13 @@
 # 资料
 
 ```
-es官网：
+1. 主文档网站（推荐）
+地址：https://www.elastic.co/guide/cn/elasticsearch/guide/current/index.html
+https://www.elastic.co/guide/en/elasticsearch/reference/8.15/elasticsearch-intro-what-is-es.html
+特点：内容相对完整，但可能不是最新版本
+2. Elastic 中文社区
+地址：https://elasticsearch.cn/
+特点：中国官方社区，有文档、问答、博客等
 ```
 
 
