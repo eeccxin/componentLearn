@@ -1,3 +1,11 @@
+# 资料
+
+```
+es官网：
+```
+
+
+
 # 0、了解ElasticSearch
 
 ## 0.1、百度百科
@@ -1513,8 +1521,7 @@ PUT /索引名/_mapping
 {
   "properties": {
     "字段名": {
-      "type": "新类型",    // 参考图片中的数据类型
-      "新增参数": "值"
+      "type": "新类型"   // 参考图片中的数据类型
     }
   }
 }
@@ -1661,6 +1668,91 @@ PUT /test2
 
 ![image-20210221234511847](狂神说ES7.6笔记.assets/image-20210221234511847.png)
 
+##### 多字段映射
+
+```bash
+# 最佳实践：同时支持text搜索和keyword精确匹配
+"tags": {
+  "type": "text",
+  "fields": {
+    "keyword": {
+      "type": "keyword"
+    }
+  }
+}
+```
+
+ES 会**同时建立两种索引**：
+
+| 字段路径                | 索引方式       | 实际存储内容（简化示意）                                     |
+| ----------------------- | -------------- | ------------------------------------------------------------ |
+| `tags`(text)            | **分词索引**   | `技术宅`→ `["技术", "宅"]` `温暖`→ `["温暖"]` `直男`→ `["直", "男"]` |
+| `tags.keyword`(keyword) | **精确值索引** | `["技术宅", "温暖", "直男"]`（完整的原始字符串数组）         |
+
+
+
+```
+1. 创建索引（使用多字段映射）
+PUT /my_index
+{
+  "mappings": {
+    "properties": {
+      "tags": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256    // 可选：超过256字符的不索引
+          }
+        }
+      }
+    }
+  }
+}
+
+2. 插入测试数据
+PUT /my_index/_doc/1
+{
+  "tags": ["技术宅", "温暖", "直男"]
+}
+
+3. 执行不同类型的查询
+# 全文搜索：匹配标签内容中的词汇（解决您图片中的需求！）
+GET /my_index/_search
+{
+  "query": {
+    "match": {
+      "tags": "技术 男"
+    }
+  }
+}
+
+# 精确过滤：匹配完整的标签值
+GET /my_index/_search
+{
+  "query": {
+    "term": {
+      "tags.keyword": "技术宅"
+    }
+  }
+}
+
+# 聚合分析：统计所有标签的出现频率
+GET /my_index/_search
+{
+  "size": 0,
+  "aggs": {
+    "tag_count": {
+      "terms": {
+        "field": "tags.keyword",  // 聚合必须用keyword字段
+        "size": 10
+      }
+    }
+  }
+}
+
+```
+
 
 
 #### 3）修改（更新）
@@ -1774,7 +1866,7 @@ POST /test/_doc/2/_update
 
 > 是精准匹配，匹配得到：
 
-- 注意：前面的url只到类型（表）一级，相当于查表
+- 注意：前面的url只到类型（type，表）一级，相当于查表
 
 ```
 GET /test/_doc/_search?q=name:abw
@@ -1882,11 +1974,26 @@ GET /test/_doc/_search
 
 
 
-> 数组多条件匹配  （空格）
+> 数组多条件匹配  （空格） 必须是text类型,其实就是按空格分词了
 
 ![image-20210222013705198](狂神说ES7.6笔记.assets/image-20210222013705198.png)
 
 ![image-20210222013754984](狂神说ES7.6笔记.assets/image-20210222013754984.png)
+
+
+
+用term可以匹配到：
+
+```bash
+GET /test/_doc/_search
+{
+  "query": {
+    "terms": {
+      "tags": ["技术宅", "男"] 
+    }
+  }
+}
+```
 
 
 
@@ -1968,7 +2075,7 @@ GET /test/_doc/_search
 
 ##### `term`用法
 
-先看看term的定义，term是代表完全匹配，也就是精确查询，搜索前不会再对搜索词进行分词拆解。
+先看看term的定义，term是代表完全匹配，也就是**精确查询，搜索前不会再对搜索词进行分词拆解**。
 
 这里通过例子来说明，先存放一些数据：
 
@@ -1986,6 +2093,12 @@ GET /test/_doc/_search
     "tags": ["HuBei", "love"]
 }
 ```
+
+数据存储方式（默认分词字母是小写）：
+
+<img src="狂神说ES7.6笔记.assets/image-20251225194109219.png" alt="image-20251225194109219" style="zoom:33%;" />
+
+
 
 来使用`term` 查询下：
 
@@ -2044,8 +2157,6 @@ GET /test/_doc/_search
 
 发现，title里有关love的关键字都查出来了，但是我只想精确匹配 `love China`这个，按照下面的写法看看能不能查出来：
 
-
-
 ```json
 {
   "query": {
@@ -2056,9 +2167,11 @@ GET /test/_doc/_search
 }
 ```
 
-执行发现无数据，从概念上看，term属于精确匹配，只能查单个词。我想用term匹配多个词怎么做？可以使用`terms`来：
+**执行发现无数据**，从概念上看，term属于精确匹配，只能查单个词。
 
 
+
+我想用term匹配多个词怎么做？可以使用`terms`来：
 
 ```json
 {
@@ -2071,8 +2184,6 @@ GET /test/_doc/_search
 ```
 
 查询结果为：
-
-
 
 ```json
 {
@@ -2115,9 +2226,7 @@ GET /test/_doc/_search
 }
 ```
 
-发现全部查询出来，为什么？因为terms里的`[ ]` 多个是或者的关系，只要满足其中一个词就可以。想要通知满足两个词的话，就得使用bool的must来做，如下：
-
-
+发现全部查询出来，为什么？因为terms里的`[ ]` 多个是**或者**的关系，只要满足其中一个词就可以。想要通知满足两个词的话，就得使用bool的must来做，如下：
 
 ```json
 {
@@ -2140,7 +2249,67 @@ GET /test/_doc/_search
 }
 ```
 
-可以看到，我们上面使用`china`是小写的。当使用的是大写的`China` 我们进行搜索的时候，发现搜不到任何信息。这是为什么了？**title这个词在进行存储的时候，进行了分词处理。**我们这里使用的是默认的分词处理器进行了分词处理。我们可以看看如何进行分词处理的？
+可以看到，我们上面使用`china`是小写的。当使用的是大写的`China` 我们进行搜索的时候，发现搜不到任何信息。
+
+要想匹配到，有以下方案：
+
+```bash
+方案1：查询时使用小写（推荐）
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "term": { "title": "love" } },
+        { "term": { "title": "china" } }  // 使用小写
+      ]
+    }
+  }
+}
+方案2：使用 match查询（自动处理大小写）
+{
+  "query": {
+    "bool": {
+      "must": [
+        { "match": { "title": "love" } },   // match查询会进行小写转换
+        { "match": { "title": "China" } }   // 即使大写也会被转为小写
+      ]
+    }
+  }
+}
+
+
+方案3：使用 keyword字段（保持原始大小写）
+如果确实需要区分大小写，应该使用多字段映射：
+PUT /your_index
+{
+  "mappings": {
+    "properties": {
+      "title": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"  // 保留原始大小写
+          }
+        }
+      }
+    }
+  }
+}
+==》
+GET /test/_doc/_search
+{
+  "query": {
+    "term": {
+      "title.keyword": "love China"
+    }
+  }
+}
+
+```
+
+
+
+这是为什么了？**title这个词在进行存储的时候，进行了分词处理。**我们这里使用的是默认的分词处理器进行了分词处理。我们可以看看如何进行分词处理的？
 
 ##### 分词处理器
 
@@ -2240,13 +2409,13 @@ GET test/doc/_search
 }
 ```
 
-发现两个都查出来了，为什么？因为match进行搜索的时候，会先进行分词拆分，拆完后，再来匹配，上面两个内容，他们title的词条为： `love china hubei` ，我们搜索的为`love China` 我们进行分词处理得到为`love china` ，并且属于或的关系，只要任何一个词条在里面就能匹配到。如果想 `love` 和 `China` 同时匹配到的话，怎么做？使用 `match_phrase`
+发现两个都查出来了，为什么？因为match进行搜索的时候，会先进行分词拆分，拆完后，再来匹配，上面两个内容，他们title的词条为： `love china hubei` ，我们搜索的为`love China` 我们进行分词处理得到为`love china` ，并且属于或的关系，只要任何一个词条在里面就能匹配到。
+
+如果想 `love` 和 `China` 同时匹配到的话，怎么做？使用 `match_phrase`
 
 ##### `match_phrase` 用法
 
-`match_phrase` 称为短语搜索，要求所有的分词必须同时出现在文档中，同时位置必须紧邻一致。
-
-
+`match_phrase` 称为**短语搜索**，要求所有的分词必须同时出现在文档中，同时位置必须**紧邻**一致。
 
 ```json
 GET test/doc/_search
@@ -2260,8 +2429,6 @@ GET test/doc/_search
 ```
 
 结果为：
-
-
 
 ```json
 {
@@ -2353,6 +2520,66 @@ GET _cat/indices?h=index&s=index
 ```
 
 
+
+#### 3、聚合分析
+
+> 字段类型必须是keyword
+
+```bash
+GET /my_index/_search
+{
+  "size": 0,
+  "aggs": {
+    "tag_count": {
+      "terms": {
+        "field": "tags.keyword", 
+        "size": 10
+      }
+    }
+  }
+}
+
+==》
+{
+  "took" : 1,
+  "timed_out" : false,
+  "_shards" : {
+    "total" : 1,
+    "successful" : 1,
+    "skipped" : 0,
+    "failed" : 0
+  },
+  "hits" : {
+    "total" : {
+      "value" : 1,
+      "relation" : "eq"
+    },
+    "max_score" : null,
+    "hits" : [ ]
+  },
+  "aggregations" : {
+    "tag_count" : {
+      "doc_count_error_upper_bound" : 0,
+      "sum_other_doc_count" : 0,
+      "buckets" : [
+        {
+          "key" : "技术宅",
+          "doc_count" : 1
+        },
+        {
+          "key" : "温暖",
+          "doc_count" : 1
+        },
+        {
+          "key" : "直男",
+          "doc_count" : 1
+        }
+      ]
+    }
+  }
+}
+
+```
 
 
 
