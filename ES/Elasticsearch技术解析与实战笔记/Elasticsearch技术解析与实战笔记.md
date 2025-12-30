@@ -444,7 +444,107 @@ GET /test/_mapping?flat_settings=true
 
 
 
+## 1.5 批量操作
 
+### _bulk
+
+####  **基本语法结构**
+
+```json
+POST /{index}/_bulk
+{ "action": { "metadata" } }   # 第1行：操作指令
+{ "data" }                    # 第2行：数据文档
+{ "action": { "metadata" } }   # 第3行：操作指令  
+{ "data" }                    # 第4行：数据文档
+```
+
+#### **四种操作类型**
+
+**1. index - 索引文档（存在则覆盖）**
+
+```json
+POST /orders/_bulk
+{"index": {"_id": "1", "routing": "customer_100"}}
+{"order_id":"ORD001","customer_id":100,"product_name":"Laptop","amount":999.99}
+{"index": {"_id": "2", "routing": "customer_100"}}
+{"order_id":"ORD002","customer_id":100,"product_name":"Mouse","amount":29.99}
+```
+
+**2. create - 创建文档（存在则报错）**
+
+```json
+POST /orders/_bulk  
+{"create": {"_id": "3", "routing": "customer_200"}}
+{"order_id":"ORD003","customer_id":200,"product_name":"Keyboard","amount":79.99}
+```
+
+**3. update - 更新文档**
+
+```json
+POST /orders/_bulk
+{"update": {"_id": "1", "routing": "customer_100"}}
+{"doc": {"status": "shipped", "shipped_at": "2024-01-16"}}
+```
+
+**4. delete - 删除文档**
+
+```json
+POST /orders/_bulk
+{"delete": {"_id": "2", "routing": "customer_100"}}
+```
+
+
+
+#### **NDJSON格式要求**
+
+> NDJSON 是一种简单的格式，每个JSON对象用换行符分隔：
+
+```json
+// ✅ 正确：严格的换行分隔
+{"index":{}}
+{"field":"value"}
+{"index":{}}
+{"field":"value"}
+
+// ❌ 错误：缺少换行
+{"index":{}}{"field":"value"}
+
+// ❌ 错误：多出逗号
+{"index":{}},
+{"field":"value"}
+```
+
+==》 在代码中传参是通过[]数组传递。
+
+```php
+    public function getActionAndMetaData($index, $type, $id) {
+        return '{"update":{"_index":"' . $index . '","_type":"' . $type . '","_id":' . $id . '}}';
+    }
+    
+     public function getOptionalSource($id, $updateTime) {
+        return '{"doc":{"id":"' . $id . ',"updateTime":' . $updateTime . '},"upsert":{"id":"' . $id . '", ',"updateTime":' . $updateTime . '}}';
+    }
+    
+         foreach ($infos as $info) {
+            $data[] = $this->getActionAndMetaData('search_index', '_doc', $info['infoId']);
+            $data[] = $this->getOptionalSource($info['infoId'],  $time);
+        }
+```
+
+
+
+### _msearch API（多搜索）
+
+```
+POST /_msearch
+{"index": "orders"}
+{"query": {"match": {"customer_id": 100}}, "size": 10}
+{"index": "orders"}
+{"query": {"match": {"customer_id": 200}}, "size": 10}
+
+```
+
+<img src="Elasticsearch技术解析与实战笔记.assets/image-20251230171700490.png" alt="image-20251230171700490" style="zoom:50%;" />
 
 # 第2章 索引
 
@@ -784,16 +884,31 @@ GET /index/_mapping/field/user.name
 
 Elasticsearch 的别名机制有点像数据库中的视 图。例如:为索引 test1 增加一个别名 alias1。
 
-基本使用：
+### 基本使用
+
+
+
+创建别名：
 
 ```bash
+# PUT 创建别名
+PUT /secisland/_alias/2013
+{
+  "routing": "1",
+  "filter": {
+    "term": {
+      "year": 2013
+    }
+  }
+}
+
 # 1. 为索引增加别名 为单个索引增加别名
 POST /_aliases
 {
   "actions": [
     {
       "add": {
-        "index": "test1",
+        "index": "secisland",
         "alias": "alias1"
       }
     }
@@ -878,7 +993,604 @@ POST /_aliases
 
 
 
+查看别名：
+
+```bash
+# 1. 查看所有别名（最常用）
+GET /_cat/aliases?v
+alias                    index                           filter routing.index routing.search is_write_index
+alias1                   secisland                       -      -             -              -
+
+
+GET /secisland/_alias
+==》
+{
+  "secisland" : {
+    "aliases" : {
+      "alias1" : { }
+    }
+  }
+}
+
+```
+
+
+
+删除别名：
+
+```
+DELETE /secisland/_alias/alias1
+```
+
+
+
+### 过滤索引别名
+
+==》其实就是通过filter将特定条件的文档作为索引别名的内容，类似于过滤出了个子集。
+
+```bash
+# 1. 创建索引并设置映射
+PUT /test1
+{
+  "mappings": {
+    "properties": {
+      "user": {
+        "type": "keyword"
+      }
+    }
+  }
+}
+
+# 2. 创建带过滤条件的别名
+POST /_aliases
+{
+  "actions": [
+    {
+      "add": {
+        "index": "test1",
+        "alias": "alias2",
+        "filter": {
+          "term": {
+            "user": "kimchy"
+          }
+        }
+      }
+    }
+  ]
+}
+
+
+
+```
+
+
+
+例子：
+
+```bash
+# 创建用户索引
+PUT /users
+{
+  "mappings": {
+    "properties": {
+      "user_id": {
+        "type": "integer"
+      },
+      "status": {
+        "type": "keyword"
+      },
+      "region": {
+        "type": "keyword"
+      }
+    }
+  }
+}
+
+# 创建多个过滤别名
+POST /_aliases
+{
+  "actions": [
+    {
+      "add": {
+        "index": "users",
+        "alias": "active_users",
+        "filter": {
+          "term": {
+            "status": "active"
+          }
+        }
+      }
+    },
+    {
+      "add": {
+        "index": "users",
+        "alias": "us_users",
+        "filter": {
+          "term": {
+            "region": "US"
+          }
+        }
+      }
+    },
+    {
+      "add": {
+        "index": "users",
+        "alias": "user_100",
+        "routing": "100",
+        "filter": {
+          "term": {
+            "user_id": 100
+          }
+        }
+      }
+    }
+  ]
+}
+
+# 插入mock数据
+POST /users/_bulk
+{"index":{}}
+{"user_id":1,"status":"active","region":"US"}
+{"index":{}}
+{"user_id":2,"status":"active","region":"EU"}
+{"index":{}}
+{"user_id":3,"status":"inactive","region":"US"}
+{"index":{}}
+{"user_id":4,"status":"active","region":"ASIA"}
+{"index":{}}
+{"user_id":5,"status":"suspended","region":"US"}
+{"index":{}}
+{"user_id":6,"status":"active","region":"EU"}
+{"index":{}}
+{"user_id":7,"status":"active","region":"ASIA"}
+{"index":{}}
+{"user_id":8,"status":"inactive","region":"US"}
+{"index":{}}
+{"user_id":9,"status":"active","region":"EU"}
+{"index":{}}
+{"user_id":10,"status":"active","region":"US"}
+{"index":{}}
+{"user_id":100,"status":"active","region":"US"}
+{"index":{}}
+{"user_id":101,"status":"inactive","region":"EU"}
+{"index":{}}
+{"user_id":102,"status":"active","region":"ASIA"}
+
+
+# 搜索活跃用户
+GET /active_users/_search
+{
+  "query": {
+    "match_all": {}
+  }
+}
+
+# 搜索美国用户
+GET /us_users/_search
+{
+  "size": 10
+}
+
+```
+
+
+
+
+
+### 路由索引
+
+```bash
+# 1、创建带路由功能的订单索引
+PUT /orders
+{
+  "mappings": {
+    "properties": {
+      "order_id": {
+        "type": "keyword"
+      },
+      "customer_id": {
+        "type": "integer"
+      },
+      "product_name": {
+        "type": "keyword"
+      },
+      "amount": {
+        "type": "float"
+      },
+      "status": {
+        "type": "keyword"
+      },
+      "created_at": {
+        "type": "date"
+      }
+    }
+  },
+  "settings": {
+    "number_of_shards": 3
+  }
+}
+
+# 2. 插入模拟订单数据（使用路由）
+POST /orders/_bulk
+{"index": {"routing": "customer_100"}}
+{"order_id":"ORD001","customer_id":100,"product_name":"Laptop","amount":999.99,"status":"completed","created_at":"2024-01-10"}
+{"index": {"routing": "customer_100"}}
+{"order_id":"ORD002","customer_id":100,"product_name":"Mouse","amount":29.99,"status":"completed","created_at":"2024-01-12"}
+{"index": {"routing": "customer_200"}}
+{"order_id":"ORD003","customer_id":200,"product_name":"Keyboard","amount":79.99,"status":"pending","created_at":"2024-01-11"}
+{"index": {"routing": "customer_200"}}
+{"order_id":"ORD004","customer_id":200,"product_name":"Monitor","amount":299.99,"status":"shipped","created_at":"2024-01-09"}
+{"index": {"routing": "customer_300"}}
+{"order_id":"ORD005","customer_id":300,"product_name":"Tablet","amount":399.99,"status":"completed","created_at":"2024-01-08"}
+{"index": {"routing": "customer_100"}}
+{"order_id":"ORD006","customer_id":100,"product_name":"Headphones","amount":149.99,"status":"completed","created_at":"2024-01-15"}
+
+# 3. 创建路由别名
+# 为客户100创建路由别名
+POST /_aliases
+{
+  "actions": [
+    {
+      "add": {
+        "index": "orders",
+        "alias": "customer_100_orders",
+        "routing": "customer_100"
+      }
+    }
+  ]
+}
+
+# 查询路由别名
+GET /customer_100_orders/_search
+{
+  "query": {
+    "term": {
+      "status": "completed"
+    }
+  }
+}
+```
+
+
+
 ## 2.4 索引配置
+
+### 配置操作
+
+```bash
+# 获取配置
+GET /secisland/_settings
+{
+  "secisland" : {
+    "settings" : {
+      "index" : {
+        "verified_before_close" : "true",
+        "refresh_interval" : "30s",
+        "translog" : {
+          "sync_interval" : "5s",
+          "durability" : "async"
+        },
+        "provided_name" : "secisland",
+        "max_result_window" : "65536",
+        "creation_date" : "1767084188580",
+        "unassigned" : {
+          "node_left" : {
+            "delayed_timeout" : "5m"
+          }
+        },
+        "analysis" : {
+          "analyzer" : {
+            "content" : {
+              "type" : "custom",
+              "tokenizer" : "whitespace"
+            }
+          }
+        },
+        "number_of_replicas" : "2",
+        "uuid" : "O5uIVeZ2S2e7DGJC_hBbRg",
+        "version" : {
+          "created" : "7100199"
+        },
+        "routing" : {
+          "allocation" : {
+            "include" : {
+              "_tier_preference" : "data_content"
+            }
+          }
+        },
+        "number_of_shards" : "5"
+      }
+    }
+  }
+}
+
+
+# 更新索引配置
+PUT /secisland/_settings
+{
+"index" : {"number_of_replicas" : 4}
+}
+
+# 更新分词器
+POST /secisland/_close
+PUT /secisland/_settings
+{
+  "index": {
+    "analysis": {
+      "analyzer": {
+        "content": {
+          "type": "custom",
+          "tokenizer": "standard"
+        }
+      }
+    }
+  }
+}
+POST /secisland/_open
+
+```
+
+
+
+### 索引分析
+
+索引分析(analysis)是这样一个过程:首先,把一个文本块分析成一个个单独的词 (term),为了后面的倒排索引做准备。然后标准化这些词为标准形式,提高它们的“可搜索性”。
+
+这些工作是分析器(analyzers)完成的。
+
+一个分析器(analyzers)是一个组合,用于将 三个功能放到一起: 
+
+- **字符过滤器**:字符串经过字符过滤器(character filter)处理,它们的工作是在标记化 之前处理字符串。字符过滤器能够去除 HTML 标记,或者转换“&”为“and" 
+- **分词器**:分词器(tokenizer)被标记化成独立的词。一个简单的分词器(tokenizer) 可以根据空格或逗号将单词分开。 
+- **标记过滤器**:每个词都通过所有标记过滤(token_filters)处理,它可以修改词(例如 将 "Quick" 转为小写),去掉词(例如连接词像“a”、“and”、“ the”等),或者增加 词(例如同义词像“jump”和“leap")。
+
+
+
+示例：
+
+```bash
+POST /_analyze
+{
+  "char_filter": [
+    "html_strip"
+  ],
+  "tokenizer": "keyword",
+  "filter": [ //tokn过滤器
+    "uppercase"
+  ],
+  "text": "This is a <b>test</b>"
+}
+
+
+==》
+{
+  "tokens" : [
+    {
+      "token" : "THIS IS A TEST",
+      "start_offset" : 0,
+      "end_offset" : 21,
+      "type" : "word",
+      "position" : 0
+    }
+  ]
+}
+```
+
+"explain" : true 返回详情
+
+```bash
+
+POST /_analyze
+{
+  "tokenizer": "keyword",
+  "filter": [
+    "uppercase"
+  ],
+  "char_filter": [
+    "html_strip"
+  ],
+  "text": "This is a <b>test</b>",
+  "explain" : true
+}
+
+==》
+{
+  "detail" : {
+    "custom_analyzer" : true,
+    "charfilters" : [
+      {
+        "name" : "html_strip",
+        "filtered_text" : [
+          "This is a test"
+        ]
+      }
+    ],
+    "tokenizer" : {
+      "name" : "keyword",
+      "tokens" : [
+        {
+          "token" : "This is a test",
+          "start_offset" : 0,
+          "end_offset" : 21,
+          "type" : "word",
+          "position" : 0,
+          "bytes" : "[54 68 69 73 20 69 73 20 61 20 74 65 73 74]",
+          "positionLength" : 1,
+          "termFrequency" : 1
+        }
+      ]
+    },
+    "tokenfilters" : [
+      {
+        "name" : "uppercase",
+        "tokens" : [
+          {
+            "token" : "THIS IS A TEST",
+            "start_offset" : 0,
+            "end_offset" : 21,
+            "type" : "word",
+            "position" : 0,
+            "bytes" : "[54 48 49 53 20 49 53 20 41 20 54 45 53 54]",
+            "positionLength" : 1,
+            "termFrequency" : 1
+          }
+        ]
+      }
+    ]
+  }
+}
+
+
+```
+
+
+
+### 索引模板
+
+#### 1、基本操作
+
+索引模板就是创建好一个索引参数设置(settings)和映射(mapping)的模板,
+
+在创建新索引的时候指定模板名称就可以使用模板定义好的参数设置和映射。
+
+es6.0 用_template， es7.0 后用 _index_template：
+
+```bash
+DELETE /_template/template_1
+DELETE /_template/template_2
+
+# 创建可组合模板1
+PUT /_index_template/template_1
+{
+  "index_patterns": ["te*"],
+  "priority": 1,
+  "template": {
+    "settings": {
+      "number_of_shards": 2,
+      "number_of_replicas": 1,
+      "index.refresh_interval": "30s"
+    },
+    "mappings": {
+      "properties": {
+        "timestamp": {
+          "type": "date"
+        },
+        "message": {
+          "type": "text"
+        }
+      }
+    },
+    "aliases": {
+      "all_test_indices": {}
+    }
+  }
+}
+
+# 创建可组合模板2
+PUT /_index_template/template_2
+{
+  "index_patterns": ["te*"],
+  "priority": 2,
+  "template": {
+    "settings": {
+      "number_of_shards": 3,
+      "index.refresh_interval": "10s"
+    },
+    "mappings": {
+      "properties": {
+        "timestamp": {
+          "type": "date",
+          "format": "yyyy-MM-dd HH:mm:ss"
+        },
+        "level": {
+          "type": "keyword"
+        },
+        "message": {
+          "type": "text",
+          "analyzer": "standard"
+        }
+      }
+    }
+  }
+}
+
+# 查看索引模板
+GET /_index_template
+
+# 创建匹配 te* 模式的索引
+PUT /test-merge-index
+
+# 查看索引设置（合并后的结果），优先使用priority大的template_2
+GET /test-merge-index/_settings 
+
+# 查看映射（合并后的结果）
+GET /test-merge-index/_mapping
+```
+
+
+
+es 6.0 
+
+```bash
+# 1.创建索引模板
+# Deprecation: Deprecated field [template] used, replaced by [index_patterns]
+PUT /_template/template_1
+{
+  "index_patterns": "te*",
+  "settings": {
+    "number_of_shards": 1
+  },
+  "mappings": {
+    "_source": {
+      "enabled": false
+    }
+  }
+}
+
+# 2. 获取索引模板
+GET /_template/template_1
+==》
+{
+  "template_1" : {
+    "order" : 0,
+    "index_patterns" : [
+      "te*"
+    ],
+    "settings" : {
+      "index" : {
+        "number_of_shards" : "1"
+      }
+    },
+    "mappings" : {
+      "_source" : {
+        "enabled" : false
+      }
+    },
+    "aliases" : { }
+  }
+}
+
+# 3. 删除索引模板 template_1 为之前创建的索引模板名称。
+DELETE /_template/template_1
+
+
+```
+
+
+
+#### 2、多个模板匹配
+
+多个模板匹配 有这样一种情况: template_1、template_2两个模板,使用te*会匹配2个模板,最后**合并两个模板的配置**。
+
+如果配置重复，**es7.0 看priority参数，使用优先级大的**。
+
+如果是es6.0，设置 order 属性, order 是从0开始的数字, 先匹配 order 数字小的,再匹配数字大的,如果有相同的属性配置,后匹配的会覆盖之前的配置（也是用order大的）。
+
+
+
+
+
+
 
 ## 2.5 索引监控
 
