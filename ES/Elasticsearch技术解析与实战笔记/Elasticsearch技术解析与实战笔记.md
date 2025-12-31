@@ -442,8 +442,6 @@ GET /test/_settings?flat_settings=true
 GET /test/_mapping?flat_settings=true
 ```
 
-
-
 ## 1.5 批量操作
 
 ### _bulk
@@ -545,6 +543,83 @@ POST /_msearch
 ```
 
 <img src="Elasticsearch技术解析与实战笔记.assets/image-20251230171700490.png" alt="image-20251230171700490" style="zoom:50%;" />
+
+
+
+### _mget 多文档查询
+
+#### **1. 基本语法（全路径查询）**
+
+```json
+POST /_mget
+{
+  "docs": [
+    {
+      "_index": "secisland",
+      "_type": "_doc",  # ES 7.x 固定为 _doc
+      "_id": "1"
+    },
+    {
+      "_index": "secisland", 
+      "_type": "_doc",
+      "_id": "2"
+    }
+  ]
+}
+
+==》
+{
+  "docs" : [
+    {
+      "_index" : "secisland",
+      "_type" : "_doc",
+      "_id" : "1",
+      "found" : false
+    },
+    {
+      "_index" : "secisland",
+      "_type" : "_doc",
+      "_id" : "2",
+      "_version" : 1,
+      "_seq_no" : 6,
+      "_primary_term" : 1,
+      "found" : true,
+      "_source" : {
+        "counter" : 2,
+        "tags" : [
+          "green"
+        ]
+      }
+    }
+  ]
+}
+```
+
+#### **2. 简化语法**
+
+**方式1：指定索引和类型**
+
+```json
+# 而是7.0 可以不指定type  POST /secisland/_mget
+POST /secisland/_doc/_mget
+{
+  "docs": [
+    {"_id": "1"},
+    {"_id": "2"}
+  ]
+}
+```
+
+**方式2：使用ids数组（最简）**
+
+```json
+POST /secisland/_doc/_mget
+{
+  "ids": ["1", "2"]
+}
+```
+
+
 
 # 第2章 索引
 
@@ -780,7 +855,7 @@ Kibana左侧菜单 → Stack Management → Index Management
 
 
 
-## 2.2 索引映射管理
+## 2.2 索引映射管理(_mapping)
 
 ```bash
 # 更新索引映射
@@ -880,7 +955,7 @@ GET /index/_mapping/field/user.name
 
 
 
-## 2.3 索引别名
+## 2.3 索引别名(_alias)
 
 Elasticsearch 的别名机制有点像数据库中的视 图。例如:为索引 test1 增加一个别名 alias1。
 
@@ -1253,7 +1328,7 @@ GET /customer_100_orders/_search
 
 
 
-## 2.4 索引配置
+## 2.4 索引配置(_settings)
 
 ### 配置操作
 
@@ -1592,8 +1667,813 @@ DELETE /_template/template_1
 
 
 
-## 2.5 索引监控
+## 2.5 索引监控(_stats等)
 
-## 2.6 状态管理
+在 Elasticsearch 中,系统提供了接口来监控索引的状态,包括索引的统计信息、**碎片信息**、恢复的状态和分片的信息,利用这些接口可以随时监控系统索引的状态。
 
-## 2.7 文档管理
+### 2.5.1 索引统计(_stats)
+
+```bash
+# 获取所有聚合以及索引的统计数据:
+GET /_stats
+
+# 获取指定索引的统计数据:
+GET /test/_stats
+```
+
+主要看indeces 索引中的total字段：
+
+```bash
+文档统计（docs）
+"docs": {
+  "count": 4,           // 索引中总文档数：4个文档
+  "deleted": 0          // 已标记删除的文档数：0个（软删除）
+}
+存储统计（store）
+"store": {
+  "size_in_bytes": 20050,       // 索引在磁盘上的总大小：约20KB
+  "reserved_in_bytes": 0        // 为索引预留的磁盘空间：0字节
+}
+索引操作统计（indexing）
+"indexing": {
+  "index_total": 23,            // 索引操作总次数：23次
+  "index_time_in_millis": 11,  // 索引操作总耗时：11毫秒
+  "index_current": 0,          // 当前正在进行的索引操作：0个
+  "index_failed": 0,           // 失败的索引操作：0次
+  "delete_total": 0,           // 删除操作总次数：0次
+  "delete_time_in_millis": 0,  // 删除操作总耗时：0毫秒
+  "delete_current": 0,         // 当前正在进行的删除操作：0个
+  "noop_update_total": 0,      // 无实际变化的更新操作：0次
+  "is_throttled": false,       // 索引是否被限流：否
+  "throttle_time_in_millis": 0 // 限流总时间：0毫秒
+}
+获取操作统计（get）
+"get": {
+  "total": 7,                   // Get操作总次数：7次
+  "time_in_millis": 4,          // Get操作总耗时：4毫秒
+  "exists_total": 7,            // 检查文档存在的操作：7次
+  "exists_time_in_millis": 4,   // 存在检查总耗时：4毫秒
+  "missing_total": 0,           // 文档不存在的次数：0次
+  "missing_time_in_millis": 0,  // 检查不存在的耗时：0毫秒
+  "current": 0                  // 当前正在进行的Get操作：0个
+}
+搜索统计（search）
+"search": {
+  "open_contexts": 0,           // 打开的搜索上下文数：0个
+  "query_total": 350,           // 查询总次数：350次
+  "query_time_in_millis": 31,   // 查询阶段总耗时：31毫秒
+  "query_current": 0,           // 当前正在进行的查询：0个
+  "fetch_total": 350,          // 获取结果总次数：350次
+  "fetch_time_in_millis": 220, // 获取结果总耗时：220毫秒
+  "fetch_current": 0,          // 当前正在进行的获取：0个
+  "scroll_total": 0,           // 滚动搜索总次数：0次
+  "scroll_time_in_millis": 0,  // 滚动搜索总耗时：0毫秒
+  "scroll_current": 0,         // 当前活跃的滚动搜索：0个
+  "suggest_total": 0,           // 搜索建议总次数：0次
+  "suggest_time_in_millis": 0, // 搜索建议总耗时：0毫秒
+  "suggest_current": 0         // 当前正在进行的搜索建议：0个
+}
+段合并统计（merges）
+"merges": {
+  "current": 0,                     // 当前正在进行的段合并：0个
+  "current_docs": 0,              // 当前合并涉及的文档数：0个
+  "current_size_in_bytes": 0,     // 当前合并的数据大小：0字节
+  "total": 0,                      // 段合并总次数：0次
+  "total_time_in_millis": 0,       // 段合并总耗时：0毫秒
+  "total_docs": 0,                // 合并涉及的文档总数：0个
+  "total_size_in_bytes": 0,       // 合并的数据总大小：0字节
+  "total_stopped_time_in_millis": 0,    // 合并被停止的总时间：0毫秒
+  "total_throttled_time_in_millis": 0,  // 合并被限流的总时间：0毫秒
+  "total_auto_throttle_in_bytes": 41943040  // 自动限流阈值：40MB
+}
+刷新统计（refresh）
+"refresh": {
+  "total": 33,                    // 刷新操作总次数：33次
+  "total_time_in_millis": 50,     // 刷新总耗时：50毫秒
+  "external_total": 21,           // 外部触发的刷新次数：21次
+  "external_total_time_in_millis": 44,  // 外部刷新总耗时：44毫秒
+  "listeners": 0                  // 刷新监听器数量：0个
+}
+刷盘统计（flush）
+"flush": {
+  "total": 7,                     // 刷盘操作总次数：7次
+  "periodic": 0,                  // 定期刷盘次数：0次
+  "total_time_in_millis": 157     // 刷盘总耗时：157毫秒
+}
+预热统计（warmer）
+"warmer": {
+  "current": 0,                   // 当前正在进行的预热：0个
+  "total": 19,                    // 预热操作总次数：19次
+  "total_time_in_millis": 0       // 预热总耗时：0毫秒
+}
+查询缓存（query_cache）
+"query_cache": {
+  "memory_size_in_bytes": 0,      // 查询缓存内存使用：0字节
+  "total_count": 0,               // 查询缓存总条目数：0个
+  "hit_count": 0,                // 缓存命中次数：0次
+  "miss_count": 0,               // 缓存未命中次数：0次
+  "cache_size": 0,               // 当前缓存大小：0个条目
+  "cache_count": 0,              // 缓存过的查询总数：0个
+  "evictions": 0                 // 缓存驱逐次数：0次
+}
+字段数据缓存（fielddata）
+"fielddata": {
+  "memory_size_in_bytes": 0,     // 字段数据缓存内存使用：0字节
+  "evictions": 0                 // 字段数据缓存驱逐次数：0次
+}
+
+段信息（segments）
+"segments": {
+  "count": 4,                     // 索引段数量：4个
+  "memory_in_bytes": 8624,        // 段总内存使用：约8.4KB
+  "terms_memory_in_bytes": 5696,  // 词项字典内存：约5.6KB
+  "stored_fields_memory_in_bytes": 1952,  // 存储字段内存：约1.9KB
+  "term_vectors_memory_in_bytes": 0,      // 词项向量内存：0字节
+  "norms_memory_in_bytes": 128,          // 归一化因子内存：128字节
+  "points_memory_in_bytes": 0,           // 点数据内存：0字节
+  "doc_values_memory_in_bytes": 848,      // 文档值内存：848字节
+  "index_writer_memory_in_bytes": 0,      // 索引写入器内存：0字节
+  "version_map_memory_in_bytes": 0,       // 版本映射内存：0字节
+  "fixed_bit_set_memory_in_bytes": 0,     // 位集合内存：0字节
+  "max_unsafe_auto_id_timestamp": -1,     // 最大不安全ID时间戳：-1（无）
+  "file_sizes": {}               // 文件大小统计（空）
+}
+事务日志（translog）
+"translog": {
+  "operations": 0,                // 事务日志中的操作数：0个
+  "size_in_bytes": 110,           // 事务日志总大小：110字节
+  "uncommitted_operations": 0,    // 未提交的操作数：0个
+  "uncommitted_size_in_bytes": 110,  // 未提交的事务日志大小：110字节
+  "earliest_last_modified_age": 498511974  // 最早修改时间距今：约5.77天
+}
+请求缓存（request_cache）
+"request_cache": {
+  "memory_size_in_bytes": 1256,   // 请求缓存内存使用：约1.2KB
+  "evictions": 0,                 // 缓存驱逐次数：0次
+  "hit_count": 298,               // 缓存命中次数：298次
+  "miss_count": 8                 // 缓存未命中次数：8次
+}
+恢复统计（recovery）
+"recovery": {
+  "current_as_source": 0,         // 当前作为恢复源的分片：0个
+  "current_as_target": 0,        // 当前作为恢复目标的分片：0个
+  "throttle_time_in_millis": 0    // 恢复限流时间：0毫秒
+}
+堆外缓存（off_heap_cache）
+"off_heap_cache": {
+  "capacity": 0,                  // 堆外缓存容量：0字节
+  "entry_count": 0,               // 缓存条目数：0个
+  "free": 0,                      // 剩余空间：0字节
+  "hit_count": 0,                 // 命中次数：0次
+  "miss_count": 0                 // 未命中次数：0次
+}
+```
+
+
+
+<img src="Elasticsearch技术解析与实战笔记.assets/image-20251231143501907.png" alt="image-20251231143501907" style="zoom:50%;" />
+
+
+
+### 2.5.2 索引分片 (_segments)
+
+提供 Lucene 索引所在的分片信息。可以用来提供分片和索引的更多统计信息,可能是 优化信息,删除的“垃圾”数据,等等。
+
+```
+GET /test/_segments
+```
+
+<img src="Elasticsearch技术解析与实战笔记.assets/image-20251231144129819.png" alt="image-20251231144129819" style="zoom:50%;" />
+
+
+
+<img src="Elasticsearch技术解析与实战笔记.assets/image-20251231144253335.png" alt="image-20251231144253335" style="zoom:50%;" />
+
+### 2.5.3 索引恢复(_recovery)
+
+索引恢复接口提供正在进行恢复的索引分片信息。可以报告指定索引或者集群范围的恢复状态。
+
+<img src="Elasticsearch技术解析与实战笔记.assets/image-20251231144355557.png" alt="image-20251231144355557" style="zoom:50%;" />
+
+### 2.5.4 索引分片存储(_shard_stores)
+
+提供索引分片副本的存储信息。存储信息报告分片副本存在的节点、分片副本版本、指 示分片副本最近的状态以及在开启分片索引时遭遇的任何异常。
+
+```
+GET /_shard_stores?status=green
+```
+
+列出存储信息的分片范围可以通过 status 参数进行修改。默认是 yellow 和 red。还有green 值。
+
+
+
+
+
+## 2.6 状态管理（_refresh等）
+
+在 Elasticsearch 中还有一些和索引相关的重要接口需要介绍,这些接口包括清除索引缓 存、索引刷新、冲洗索引、合并索引接口等。
+
+**各操作的区别和用途**
+
+| 操作         | 作用                            | 使用场景               | 频率   |
+| ------------ | ------------------------------- | ---------------------- | ------ |
+| **清除缓存** | 释放内存，清空查询/字段数据缓存 | 内存紧张、查询性能下降 | 按需   |
+| **刷新**     | 使新增/更新的文档立即可搜索     | 需要近实时搜索         | 频繁   |
+| **刷盘**     | 持久化数据到磁盘，清空事务日志  | 释放内存，数据持久化   | 周期性 |
+| **强制合并** | 合并Lucene段，优化存储和查询    | 段过多导致查询慢       | 低频   |
+
+
+
+**1. 清除缓存**（_cache/clear）
+
+```json
+# 清除所有缓存
+POST /secisland/_cache/clear
+
+# 清除特定类型缓存
+POST /secisland/_cache/clear?query=true     # 清除查询缓存
+POST /secisland/_cache/clear?fielddata=true # 清除字段数据缓存  
+POST /secisland/_cache/clear?request=true   # 清除请求缓存
+
+# 清除特定字段缓存
+POST /secisland/_cache/clear?fields=field1,field2
+
+# 清除多个索引缓存
+POST /secisland,elasticsearch/_cache/clear
+
+# 清除所有索引缓存
+POST /_cache/clear
+```
+
+**2. 索引刷新**（_refresh）
+
+```json
+# 刷新单个索引（使数据可搜索）
+POST /secisland/_refresh
+
+# 刷新多个索引
+POST /secisland,elasticsearch/_refresh
+
+# 刷新所有索引
+POST /_refresh
+```
+
+**3. 刷盘（_flush）**
+
+```json
+# 冲洗单个索引（持久化数据到磁盘）
+POST /secisland/_flush
+
+# 冲洗多个索引  
+POST /secisland,elasticsearch/_flush
+
+# 冲洗所有索引
+POST /_flush
+```
+
+**4. 强制合并（_forcemerge）**
+
+```json
+# 基本合并
+POST /secisland/_forcemerge
+
+# 完全合并为1个段
+POST /secisland/_forcemerge?max_num_segments=1
+
+# 只合并删除文档的段
+POST /secisland/_forcemerge?only_expunge_deletes=true
+
+# 合并后不冲洗
+POST /secisland/_forcemerge?flush=false
+
+# 组合参数
+POST /secisland/_forcemerge?max_num_segments=1&only_expunge_deletes=true
+
+# 合并多个索引
+POST /secisland,elasticsearch/_forcemerge
+
+# 合并所有索引
+POST /_forcemerge
+```
+
+
+
+## 2.7 文档管理（操作）
+
+### 2.7.1 增加文档
+
+**1. 基本操作语法**
+
+```json
+PUT /{index}/_doc/{id}    # 创建/更新文档（指定ID）
+POST /{index}/_doc/       # 创建文档（自动生成ID）
+```
+
+**2. 响应字段说明**
+
+```json
+{
+  "_index" : "test",
+  "_type" : "_doc",
+  "_id" : "2",
+  "_version" : 5,
+  "result" : "updated",
+  "_shards" : {
+    "total" : 2,
+    "successful" : 2,
+    "failed" : 0
+  },
+ "_seq_no": 5,           # 序列号
+  "_primary_term": 1,     # 主分片任期
+}
+
+```
+
+**3. 核心特性**
+
+- **自动创建索引**：索引不存在时自动创建（可配置禁用 action.auto_create_index = false）
+- **自动字段映射**：根据JSON值自动推断字段类型（可设置 index.mapper.dynamic 为 false 禁用）
+- **版本控制**：每次更新版本号（_version）递增，支持并发控制
+
+```bash
+# es旧版本方式（已弃用）
+PUT /test/_doc/2?version=2
+==》
+{
+  "error" : {
+    "root_cause" : [
+      {
+        "type" : "action_request_validation_exception",
+        "reason" : "Validation Failed: 1: internal versioning can not be used for optimistic concurrency control. Please use `if_seq_no` and `if_primary_term` instead;"
+      }
+    ],
+    "type" : "action_request_validation_exception",
+    "reason" : "Validation Failed: 1: internal versioning can not be used for optimistic concurrency control. Please use `if_seq_no` and `if_primary_term` instead;"
+  },
+  "status" : 400
+}
+
+
+
+# 正确：新版本方式 ==>通过序列号和主分片任期控制
+PUT /test/_doc/2?if_seq_no=5&if_primary_term=1
+==》
+失败时返回409
+{
+  "error" : {
+    "root_cause" : [
+      {
+        "type" : "version_conflict_engine_exception",
+        "reason" : "[2]: version conflict, required seqNo [14], primary term [1]. current document has seqNo [15] and primary term [1]",
+        "index_uuid" : "7RwLm5ChQVeUFbTlpL4e7g",
+        "shard" : "0",
+        "index" : "test"
+      }
+    ],
+    "type" : "version_conflict_engine_exception",
+    "reason" : "[2]: version conflict, required seqNo [14], primary term [1]. current document has seqNo [15] and primary term [1]",
+    "index_uuid" : "7RwLm5ChQVeUFbTlpL4e7g",
+    "shard" : "0",
+    "index" : "test"
+  },
+  "status" : 409
+}
+```
+
+- **ID唯一性**：相同ID会更新文档，不同ID创建新文档
+
+- **自动生成ID**：不指定ID时生成唯一ID(随机字符串，非自增)
+
+```bash
+POST /test/_doc/
+{
+....
+}
+
+==>
+{
+  "_index" : "test",
+  "_type" : "_doc",
+  "_id" : "AIpRc5sBWU_ZLLk5Hn4N",
+  "_version" : 1,
+  "result" : "created",
+  "_shards" : {
+    "total" : 2,
+    "successful" : 2,
+    "failed" : 0
+  },
+  "_seq_no" : 17,
+  "_primary_term" : 1
+}
+```
+
+**4. 操作类型控制**
+
+```json
+PUT /index/_doc/1?op_type=create   # 强制创建（已存在则失败）
+PUT /index/_create/1               # 同上，强制创建
+```
+
+**5. 高级参数**
+
+- **路由控制**：`?routing=`指定分片路由
+- **刷新控制**：`?refresh=`立即刷新
+- **一致性**：`?consistency=`写入一致性级别
+- **超时设置**：`?timeout=`操作超时时间
+
+**6. 错误场景**
+
+- **版本冲突**：`409 version_conflict_engine_exception`
+- **文档已存在**：`409 document_already_exists_exception`（使用op_type=create时）
+
+
+
+### 2.7.2 更新删除文档
+
+```
+POST /test/_update
+DELETET /test/_doc/1
+```
+
+
+
+#### 使用脚本更新
+
+```bash
+# 1. 创建初始文档
+PUT /secisland/_doc/1
+{
+  "counter": 1,
+  "tags": ["red"]
+}
+
+# 2. ES 7.x 脚本配置（重要变更）
+# elasticsearch.yml 配置（不再使用旧参数）
+script.allowed_types: inline  # [] 表示允许所有脚本类型（inline、stored、file）
+script.allowed_contexts: update # []表示允许所有脚本上下文（update、search、aggs等）
+
+
+
+# 3. 使用脚本更新文档
+## 数值字段更新
+POST /secisland/_update/1
+{
+  "script": {
+    "source": "ctx._source.counter += params.count",
+    "lang": "painless",
+    "params": {
+      "count": 4
+    }
+  }
+}
+
+# 数组字段更新
+POST /secisland/_update/1
+{
+  "script": {
+    "source": "ctx._source.tags.add(params.tag)",
+    "lang": "painless", 
+    "params": {
+      "tag": "blue"
+    }
+  }
+}
+
+# 添加新字段
+POST /secisland/_update/1
+{
+  "script": {
+    "source": "ctx._source.name_of_new_field = 'value_of_new_field'",
+    "lang": "painless"
+  }
+}
+
+# 删除字段
+POST /secisland/_update/1
+{
+  "script": {
+    "source": "ctx._source.remove('name_of_new_field')",
+    "lang": "painless"
+  }
+}
+
+# 条件删除文档
+POST /secisland/_update/1
+{
+  "script": {
+    "source": "if (ctx._source.tags.contains(params.tag)) { ctx.op = 'delete' } else { ctx.op = 'none' }",
+    "lang": "painless",
+    "params": {
+      "tag": "blue"
+    }
+  }
+}
+```
+
+
+
+#### painless脚本
+
+> **Painless** 是 Elasticsearch 专门设计的**安全、高性能的脚本语言**，从 ES 5.0 开始引入，是 ES 7.x 的**默认脚本语言**。
+
+##### 语法
+
+**字段访问**
+
+```java
+ctx._source.field_name           // 访问字段
+ctx._source.nested.field         // 访问嵌套字段
+ctx._source.array_field[0]       // 访问数组元素
+```
+
+**数据类型操作**
+
+```java
+// 数值操作
+ctx._source.counter += 1         // 数值加法
+ctx._source.price *= 1.1         // 数值乘法
+ctx._source.quantity -= 5        // 数值减法
+
+// 字符串操作
+ctx._source.name = "新名称"      // 字符串赋值
+ctx._source.desc += " 追加内容"   // 字符串拼接
+
+// 数组操作
+ctx._source.tags.add("new_tag")  // 数组添加元素
+ctx._source.tags.remove(0)       // 数组删除元素
+```
+
+**条件判断**
+
+```java
+// if 条件
+if (ctx._source.counter > 10) {
+    ctx._source.status = "high"
+}
+
+// 三元运算符
+ctx._source.level = (ctx._source.score > 60) ? "pass" : "fail"
+```
+
+**循环遍历**
+
+```java
+// 遍历数组
+for (tag in ctx._source.tags) {
+    // 处理每个标签
+}
+```
+
+
+
+##### 应用场景
+
+**文档更新**
+
+```json
+POST /orders/_update/1
+{
+  "script": {
+    "source": "ctx._source.total = ctx._source.quantity * ctx._source.price",
+    "lang": "painless"
+  }
+}
+```
+
+**搜索时计算**
+
+```json
+GET /products/_search
+{
+  "query": {
+    "script_score": {
+      "query": {"match_all": {}},
+      "script": {
+        "source": "doc['price'].value * params.discount",
+        "params": {
+          "discount": 0.8
+        }
+      }
+    }
+  }
+}
+```
+
+**聚合计算**
+
+```json
+GET /sales/_search
+{
+  "aggs": {
+    "profit": {
+      "sum": {
+        "script": {
+          "source": "doc['revenue'].value - doc['cost'].value"
+        }
+      }
+    }
+  }
+}
+```
+
+
+
+### 2.7.3 查询文档
+
+```
+GET /test/_doc
+```
+
+
+
+
+
+### 2.7.4 词向量统计
+
+term vector 是在 Lucene 中的一个概念,就是对于文档的某一列,如 title、body 这种文 本类型的建立词频的多维向量空间,每一个词就是一个维度,这个维度的值就是这个词在 这个列中的频率。
+
+在 Elasticsearch 中 termvectors 返回在索引中特定文档字段的统计信息, termvectors 在 Elasticsearch 中是实时分析的,如果要想不实时分析,可以设置 realtime 参数 为false
+
+#### 示例
+
+```bash
+# 步骤1：创建索引
+PUT /my_index
+{
+  "mappings": {
+    "properties": {
+      "title": {
+        "type": "text",
+        "term_vector": "with_positions_offsets"
+      }
+    }
+  }
+}
+
+# 步骤2：插入数据
+POST /my_index/_doc/1
+{
+  "title": "Elasticsearch is a powerful search engine based on Lucene"
+}
+
+# 步骤3：查询词向量
+GET /my_index/_doc/1/_termvectors
+{
+  "fields": ["title"]
+}
+```
+
+
+
+预期响应：
+
+**计算示例**：
+
+- 文档内容：`"Elasticsearch is a powerful search engine based on Lucene"`
+- 分词后：`[elasticsearch, is, a, powerful, search, engine, based, on, lucene]`
+- **sum_doc_freq = 9**（9个词）
+- **doc_count = 1**（只有1个文档）
+- **sum_ttf = 9**（9个唯一词项）
+
+```json
+{
+  "_index": "my_index",
+  "_id": "1",
+  "_version": 1,
+  "found": true,
+  "term_vectors": { // 词向量信息
+    "title": { // 字段名称
+      "field_statistics": { // 字段级统计（全部文档的统计结果）
+        "sum_doc_freq": 9, // 所有文档中该字段的总词频
+        "doc_count": 1, // 包含该字段的文档数量
+        "sum_ttf": 9 // 该字段的总词项数
+        }
+      },
+      "terms": { // 词项详细信息
+        "elasticsearch" : {
+          "term_freq" : 1,
+          "tokens" : [
+            {
+              "position" : 0,
+              "start_offset" : 0,
+              "end_offset" : 13
+            }
+          ]
+        },
+        // ... 其他词汇
+      }
+    }
+  }
+}
+```
+
+===> 更新文档后，统计结果好像是累计的。
+
+#### **词向量配置选项**
+
+| 配置值                   | 说明                 |
+| ------------------------ | -------------------- |
+| `no`                     | 不存储词向量（默认） |
+| `yes`                    | 只存储词频           |
+| `with_positions`         | 存储词频+位置        |
+| `with_offsets`           | 存储词频+偏移量      |
+| `with_positions_offsets` | 存储全部信息         |
+
+
+
+### 2.7.5 查询更新接口（批量）
+
+> _update_by_query是 Elasticsearch 提供的批量更新功能，可以根据查询条件批量修改匹配的文档，无需逐个更新。
+
+基本语法：
+
+```bash
+POST /索引名/_update_by_query
+{
+  "query": {
+    "match_all": {}  // 查询条件
+  },
+  "script": {
+    "source": "ctx._source.field += params.value",
+    "lang": "painless",
+    "params": {
+      "value": 1
+    }
+  }
+}
+```
+
+
+
+
+
+#### **常用查询条件**
+
+**更新所有文档**
+
+```json
+POST /my_index/_update_by_query
+{
+  "query": {
+    "match_all": {}
+  },
+  "script": {
+    "source": "ctx._source.status = 'updated'"
+  }
+}
+```
+
+响应格式：
+
+```bash
+{
+  "took": 150,           // 耗时（毫秒）
+  "timed_out": false,    // 是否超时
+  "total": 1000,         // 匹配文档总数
+  "updated": 1000,       // 成功更新数
+  "deleted": 0,          // 删除数（delete_by_query）
+  "batches": 10,         // 批次数
+  "version_conflicts": 0,// 版本冲突数
+  "noops": 0,            // 无操作数
+  "retries": 0,          // 重试次数
+  "throttled_millis": 0, // 限流时间
+  "requests_per_second": -1,
+  "failures": []         // 失败列表
+}
+```
+
+
+
+**按条件更新**
+
+```json
+POST /my_index/_update_by_query
+{
+  "query": {
+    "term": {
+      "status": "pending"
+    }
+  },
+  "script": {
+    "source": "ctx._source.status = 'completed'"
+  }
+}
+```
+
+**范围查询更新**
+
+```json
+POST /orders/_update_by_query
+{
+  "query": {
+    "range": {
+      "price": {
+        "gte": 100
+      }
+    }
+  },
+  "script": {
+    "source": "ctx._source.discount = 0.1"
+  }
+}
+```
