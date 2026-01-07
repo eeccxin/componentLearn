@@ -2524,6 +2524,804 @@ IPv4 数据类型:IP 协议为IPv4的地址。
 
 ## 4.1 深入搜索
 
+### 4.1.1 搜索方式
+
+#### URL参数搜索
+
+> 即Get参数搜索
+
+<img src="Elasticsearch技术解析与实战笔记.assets/image-20260107192505193.png" alt="image-20260107192505193" style="zoom:50%;" />
+
+##### **一、查询参数**
+
+**1. 基本查询参数**
+
+| 参数         | 作用                                  | Kibana示例                                                |
+| ------------ | ------------------------------------- | --------------------------------------------------------- |
+| **q**        | 查询字符串                            | `GET /my_index/_search?q=title:elasticsearch`             |
+| **df**       | 默认查询字段（当q中未指定字段时使用） | `GET /my_index/_search?q=elasticsearch&df=content`        |
+| **analyzer** | 指定查询字符串的分词器                | `GET /my_index/_search?q=elasticsearch&analyzer=standard` |
+
+**2. 查询控制参数**
+
+| 参数                         | 作用                     | Kibana示例                                                   |
+| ---------------------------- | ------------------------ | ------------------------------------------------------------ |
+| **default_operator**         | 多条件关系（AND/OR）     | `GET /my_index/_search?q=elasticsearch kibana&default_operator=AND` |
+| **lowercase_expanded_terms** | 搜索时是否忽略大小写     | `GET /my_index/_search?q=Elasticsearch&lowercase_expanded_terms=true` |
+| **analyze_wildcard**         | 是否分析通配符查询       | `GET /my_index/_search?q=title:elas*&analyze_wildcard=true`  |
+| **lenient**                  | 是否忽略字段类型转换失败 | `GET /my_index/_search?q=price:abc&lenient=true`             |
+
+##### **二、结果控制参数**
+
+**1. 返回字段控制**
+
+| 参数        | 作用              | Kibana示例                                                   |
+| ----------- | ----------------- | ------------------------------------------------------------ |
+| **_source** | 是否/包含哪些字段 | `GET /my_index/_search?q=*&_source=false` `GET /my_index/_search?q=*&_source=title,content` |
+| **fields**  | 返回指定存储字段  | `GET /my_index/_search?q=*&fields=title,content`             |
+
+**2. 分页排序参数**
+
+| 参数     | 作用             | Kibana示例                                                   |
+| -------- | ---------------- | ------------------------------------------------------------ |
+| **from** | 起始位置（分页） | `GET /my_index/_search?q=*&from=10`                          |
+| **size** | 返回条数         | `GET /my_index/_search?q=*&size=20`                          |
+| **sort** | 排序规则         | `GET /my_index/_search?q=*&sort=price:desc` `GET /my_index/_search?q=*&sort=date:asc` |
+
+##### **三、性能与调试参数**
+
+**1. 性能控制参数**
+
+| 参数                | 作用                 | Kibana示例                                                   |
+| ------------------- | -------------------- | ------------------------------------------------------------ |
+| **timeout**         | 查询超时时间         | `GET /my_index/_search?q=*&timeout=5s`                       |
+| **terminate_after** | 每个分片最大查询条数 | `GET /my_index/_search?q=*&terminate_after=1000`             |
+| **search_type**     | 搜索类型             | `GET /my_index/_search?q=*&search_type=dfs_query_then_fetch` |
+
+**2. 调试与分析参数**
+
+| 参数             | 作用             | Kibana示例                                                   |
+| ---------------- | ---------------- | ------------------------------------------------------------ |
+| **explain**      | 显示评分计算详情 | `GET /my_index/_search?q=elasticsearch&explain=true` ==》    |
+| **track_scores** | 排序时保持评分   | `GET /my_index/_search?q=*&sort=date:desc&track_scores=true` |
+
+<img src="Elasticsearch技术解析与实战笔记.assets/image-20260107193414259.png" alt="image-20260107193414259" style="zoom:50%;" />
+
+
+
+
+
+#### POST 请求参数搜索
+
+整体结构：
+
+```bash
+POST /索引名/_search
+{
+  // 1. 查询条件
+  "query": {
+    "match": {
+      "field": "value"
+    }
+  },
+  
+  // 2. 结果控制
+  "size": 10,                    // 返回条数
+  "from": 0,                     // 起始位置
+  "sort": [                      // 排序
+    {"field1": "asc"},
+    {"_score": "desc"}
+  ],
+  
+  // 3. 字段控制
+  "_source": ["field1", "field2"],  // 返回字段
+  "fields": ["stored_field1"],      // 返回存储字段
+  
+  // 4. 聚合分析
+  "aggs": {
+    "category_agg": {
+      "terms": {"field": "category"}
+    }
+  },
+  
+  // 5. 脚本字段
+  "script_fields": {
+    "calculated_field": {
+      "script": {
+        "source": "doc['price'].value * 0.9"
+      }
+    }
+  },
+  
+  // 6. 高亮显示
+  "highlight": {
+    "fields": {
+      "content": {}
+    }
+  },
+  
+  // 7. 调试和统计
+  "explain": true,               // 评分解释
+  "profile": true,               // 性能分析
+  "track_total_hits": true,      // 精确总数
+  
+  // 8. 性能控制
+  "timeout": "5s",               // 超时时间
+  "terminate_after": 1000,       // 每个分片最大条数
+  "search_type": "query_then_fetch",  // 搜索类型
+  
+  // 9. 结果折叠
+  "collapse": {
+    "field": "group_id"         // 按字段折叠结果
+  }
+}
+```
+
+
+
+### 4.1.2 重新评分
+
+在Elasticsearch 中,搜索单个单词是比较快的,当搜索短语时,效率会比较低。所以 Elasticsearch 提供了重新评分的方法来**提高效率**。
+
+原理：（对最近的文档进行重新评分）
+
+主要是当在整个索引中搜索短语消 耗的资源会比较多,但大多数时候,人们只关注最近发生的一部分文档,所以可以先在最近 的一段文档中对短语进行重新评分,然后再查询,这个时候看起来效率会提高很多。
+
+重评分只会在query 和 post_filter 阶段返回的前K条结果上执行二次查询,
+
+在每个分片返回文档的数量由 window_size 控制,默认返回 from 到size 之间的个数。
+
+ 默认情况下对每个文档最终的得分(_score)是原始得分和重新评分后的得分进行线 性组合后的结果。原始评分和重新评分的比例关系分布由 query_weight 和 rescore_query weigh 控制,默认都是1。
+
+
+
+#### **一、重新评分机制核心原理**
+
+重新评分是一种**二次评分优化技术**，用于在**已排序的结果集**上重新计算相关性得分，主要解决：
+
+1. **效率问题**：短语搜索、复杂查询消耗大
+2. **时效性**：用户更关注近期文档
+3. **精度优化**：在粗筛结果上做精细化评分
+
+#### **二、工作流程**
+
+```markdown
+原始查询 → 粗筛排序 → 取前N条 → 重新评分 → 最终排序
+```
+
+#### **三、Kibana 实现示例**
+
+> **示例1：短语搜索优化** ==>先match 词搜索，再match_phase短语搜索
+
+```json
+POST /logs/_search
+{
+  "query": {
+    "match": {
+      "message": "error"
+    }
+  },
+  "rescore": {
+    "window_size": 50,  // 每个分片取前50条重新评分
+    "query": {
+      "rescore_query": {
+        "match_phrase": {
+          "message": "system error"
+        }
+      },
+      "query_weight": 0.7,      // 原始查询权重
+      "rescore_query_weight": 1.3  // 重评分查询权重
+    }
+  },
+  "size": 20
+}
+```
+
+> **示例2：最近文档优先**
+
+```json
+POST /articles/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {"match": {"content": "elasticsearch"}}
+      ],
+      "filter": [
+        {"range": {"publish_date": {"gte": "now-30d/d"}}}
+      ]
+    }
+  },
+  "rescore": {
+    "window_size": 100,
+    "query": {
+      "rescore_query": {
+        "match_phrase": {
+          "content": "elasticsearch 7.0"
+        }
+      },
+      "query_weight": 1.0,
+      "rescore_query_weight": 2.0
+    }
+  },
+  "sort": [
+    {"publish_date": {"order": "desc"}}
+  ],
+  "size": 10
+}
+```
+
+
+
+> **示例3：多阶段重新评分**
+
+```json
+POST /products/_search
+{
+  "query": {
+    "match": {"description": "laptop"}
+  },
+  "rescore": [  // 多个重新评分阶段
+    {
+      "window_size": 100,
+      "query": {
+        "rescore_query": {
+          "match_phrase": {
+            "description": "gaming laptop"
+          }
+        }
+      }
+    },
+    {
+      "window_size": 50,
+      "query": {
+        "rescore_query": {
+          "function_score": {
+            "query": {"match_all": {}},
+            "functions": [
+              {
+                "field_value_factor": {
+                  "field": "sales",
+                  "factor": 0.1
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "size": 20
+}
+```
+
+#### **四、关键参数说明**
+
+| 参数                     | 说明                     | 默认值        | 作用             |
+| ------------------------ | ------------------------ | ------------- | ---------------- |
+| **window_size**          | 每个分片重新评分的文档数 | `from`+`size` | 控制重新评分范围 |
+| **query_weight**         | 原始查询得分权重         | 1.0           | 线性组合权重     |
+| **rescore_query_weight** | 重新评分查询权重         | 1.0           | 线性组合权重     |
+| **score_mode**           | 得分组合方式             | `total`       | 控制得分计算逻辑 |
+
+#### **五、得分计算方式**
+
+**默认线性组合（total）**
+
+```markdown
+最终得分 = (原始得分 × query_weight) + (重新评分得分 × rescore_query_weight)
+```
+
+**示例计算**
+
+```json
+// 原始得分: 2.5, 重新评分得分: 3.0
+// query_weight: 0.7, rescore_query_weight: 1.3
+最终得分 = (2.5 × 0.7) + (3.0 × 1.3) = 1.75 + 3.9 = 5.65
+```
+
+#### **六、score_mode 选项**
+
+```json
+POST /test/_search
+{
+  "query": {...},
+  "rescore": {
+    "window_size": 50,
+    "query": {
+      "rescore_query": {...},
+      "score_mode": "multiply"  // 得分相乘
+    }
+  }
+}
+```
+
+| score_mode   | 计算方式         | 适用场景 |
+| ------------ | ---------------- | -------- |
+| **total**    | 加权求和（默认） | 通用场景 |
+| **multiply** | 得分相乘         | 强化匹配 |
+| **avg**      | 平均值           | 平衡场景 |
+| **max**      | 取最大值         | 任一匹配 |
+| **min**      | 取最小值         | 严格匹配 |
+
+#### **七、性能优化建议**
+
+**1. 合理设置 window_size**
+
+```json
+// ✅ 推荐：根据实际需求设置
+"rescore": {
+  "window_size": 100,  // 只对前100条重新评分
+  "query": {...}
+}
+
+// ❌ 避免：设置过大
+"window_size": 10000  // 会抵消性能优势
+```
+
+**2. 结合过滤条件**
+
+```bash
+POST /logs/_search
+{
+  "query": {
+    "bool": {
+      "must": [
+        {"match": {"level": "ERROR"}}
+      ],
+      "filter": [
+        {"range": {"@timestamp": {"gte": "now-1h"}}}
+      ]
+    }
+  },
+  "rescore": {
+    "window_size": 50,
+    "query": {
+      "rescore_query": {
+        "match_phrase": {
+          "message": "connection timeout"
+        }
+      }
+    }
+  }
+}
+```
+
+**3. 多字段优化**（multi_match）
+
+```json
+POST /articles/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "elasticsearch",
+      "fields": ["title^2", "content"]
+    }
+  },
+  "rescore": {
+    "window_size": 100,
+    "query": {
+      "rescore_query": {
+        "multi_match": {
+          "query": "elasticsearch performance",
+          "fields": ["title^3", "content^2", "tags"],
+          "type": "phrase"
+        }
+      },
+      "query_weight": 0.5,
+      "rescore_query_weight": 1.5
+    }
+  }
+}
+```
+
+
+
+### 4.1.3 滚动查询请求（Scroll）
+
+在 Elasticsearch 中,一次查询只能得到一次独立的结果,在分页中这是很不方便的。
+
+当用 Elasticsearch 进行第n页查询的时候,Elasticsearch 在内部查询了从开始到n页的所有数据,只是在返回的时候抛弃了前面n-1 页的内容。
+
+这样对查询大量数据的时候是非常不方便的。但Elasticsearch 提供了滚动API来解决此问题,这有点像数据库中的游标。
+
+1、滚动查询请求的原理
+
+2、搜索的时效性
+
+
+
+#### **一、滚动查询原理**
+
+滚动查询就像数据库的**游标**，允许分批获取大量数据而无需重复查询。它解决了深分页的性能问题。
+
+1. **快照冻结**：首次查询时创建数据快照，后续滚动基于此快照。（**搜索上下文的快照**，只包含必要的元数据信息，不会复制实际文档数据）
+2. **保持上下文**：服务端保存搜索上下文，客户端通过scroll_id获取下一批
+3. **分批获取**：每次只获取一批数据（如size=1000），降低内存压力
+
+滚动查询的**快照机制**包含两个层面：
+
+1. **数据一致性快照**
+
+- 首次查询时，Elasticsearch 会记录当时**分片的状态**（包括文档版本、排序信息等）
+- 后续滚动查询都基于这个**时间点的数据视图**
+- 不会复制或缓存实际文档内容，只维护搜索上下文
+
+2. **内存占用控制**
+
+- 每个滚动查询在服务端占用约 **1KB 内存**（主要存储分片状态和排序信息）
+- 实际文档数据仍然存储在原始分片中，滚动查询只是按需读取
+- 通过 `size`参数控制每批返回的文档数量（如 `size=1000`），避免一次性加载过多数据
+
+#### **二、Kibana 实现示例**
+
+##### **示例1：基本滚动查询**
+
+```bash
+# 1. 初始滚动查询（获取第一批数据和scroll_id）
+POST /logs/_search?scroll=5m
+{
+  "query": {
+    "match_all": {}
+  },
+  "size": 1000,
+  "sort": ["_doc"]  # 按文档顺序排序，效率最高
+}
+
+# 响应包含 scroll_id，用于后续获取
+# {
+#   "_scroll_id": "DnF1ZXJ5VGhlbkZldGNoBQAAAAAA...",
+#   "hits": {...}
+# }
+
+# 2. 使用scroll_id获取下一批数据
+POST /_search/scroll
+{
+  "scroll": "5m",
+  "scroll_id": "DnF1ZXJ5VGhlbkZldGNoBQAAAAAA..."
+}
+
+# 3. 重复执行直到没有数据（hits.hits数组为空）
+# 4. 清理scroll上下文（重要！）
+DELETE /_search/scroll
+{
+  "scroll_id": "DnF1ZXJ5VGhlbkZldGNoBQAAAAAA..."
+}
+```
+
+##### **示例2：带条件的滚动查询**
+
+```json
+# 初始查询
+POST /orders/_search?scroll=10m
+{
+  "query": {
+    "range": {
+      "create_time": {
+        "gte": "2024-01-01"
+      }
+    }
+  },
+  "size": 500,
+  "sort": [
+    {"create_time": "asc"},
+    {"_id": "asc"}
+  ]
+}
+```
+
+##### **示例3：批量处理数据**
+
+```json
+# 1. 获取初始批
+POST /products/_search?scroll=2m
+{
+  "query": {"match_all": {}},
+  "size": 1000,
+  "_source": ["id", "name", "price"]
+}
+
+# 2. 批量处理脚本示例（Python伪代码）
+"""
+scroll_id = initial_response['_scroll_id']
+while True:
+    response = es.scroll(scroll_id=scroll_id, scroll='2m')
+    if not response['hits']['hits']:
+        break
+    # 处理这批数据
+    process_batch(response['hits']['hits'])
+    scroll_id = response['_scroll_id']
+"""
+```
+
+#### **三、搜索的时效性问题**
+
+> **问题**：滚动查询基于**快照**，不会反映查询期间的**数据变更**
+
+```json
+# 普通分页查询（实时数据）
+GET /logs/_search
+{
+  "query": {"match_all": {}},
+  "size": 100,
+  "from": 1000  # 实时查询，每次都可能不同
+}
+
+# 滚动查询（快照数据）
+POST /logs/_search?scroll=5m
+{
+  "query": {"match_all": {}},
+  "size": 100
+}
+# 基于查询时刻的快照，后续滚动不会看到新增/删除的文档
+```
+
+#### **四、关键参数说明**
+
+| 参数       | 说明               | 示例            | 建议               |
+| ---------- | ------------------ | --------------- | ------------------ |
+| **scroll** | 滚动上下文保持时间 | `scroll=5m`     | 根据处理速度设置   |
+| **size**   | 每批获取文档数     | `size=1000`     | 根据内存限制设置   |
+| **sort**   | 排序方式           | `sort=["_doc"]` | 使用`_doc`效率最高 |
+
+#### **五、时效性解决方案**
+
+##### **方案1：基于时间戳过滤**
+
+```json
+# 查询后根据时间戳获取新增数据
+GET /logs/_search
+{
+  "query": {
+    "range": {
+      "@timestamp": {
+        "gt": "2024-01-15T10:00:00"  # 上次查询的时间戳
+      }
+    }
+  },
+  "sort": [{"@timestamp": "asc"}],
+  "size": 1000
+}
+```
+
+##### **方案2：Search After（ES 5.0+）** （非scroll方案）
+
+```json
+# 1. 首次查询
+GET /logs/_search
+{
+  "query": {"match_all": {}},
+  "size": 1000,
+  "sort": [
+    {"@timestamp": "asc"},
+    {"_id": "asc"}  # 确保排序唯一性
+  ]
+}
+
+# 2. 后续查询（使用上一批最后文档的sort值）
+GET /logs/_search
+{
+  "query": {"match_all": {}},
+  "size": 1000,
+  "sort": [
+    {"@timestamp": "asc"},
+    {"_id": "asc"}
+  ],
+  "search_after": [
+    "2024-01-15T10:00:00.000Z",  # 上一批最后一个文档的timestamp
+    "abc123"                      # 上一批最后一个文档的_id
+  ]
+}
+```
+
+#### **六、性能优化建议**
+
+**1. 合理设置scroll时间**
+
+```json
+# 根据处理速度设置，不要太长浪费资源
+POST /data/_search?scroll=2m  # 适中
+POST /data/_search?scroll=30m # 太长，浪费内存
+```
+
+**2. 优化排序方式**
+
+```json
+# ✅ 推荐：按_doc排序（最快）
+"sort": ["_doc"]
+
+# ⚠️ 谨慎：按字段排序（较慢）
+"sort": [{"timestamp": "asc"}]
+
+# ❌ 避免：按_score排序（最慢）
+"sort": ["_score"]
+```
+
+**3. 控制批次大小**
+
+```json
+# 根据JVM堆大小调整
+"size": 1000    # 默认批次大小
+"size": 10000   # 大批次，减少请求次数但增加内存
+"size": 100     # 小批次，增加请求次数但降低内存
+```
+
+#### **七、实际应用场景**
+
+**场景1：数据导出**
+
+```json
+# 导出所有数据到文件
+POST /users/_search?scroll=10m
+{
+  "query": {"match_all": {}},
+  "size": 5000,
+  "sort": ["_doc"],
+  "_source": ["id", "name", "email", "created_at"]
+}
+```
+
+**场景2：批量更新**
+
+```json
+# 分批读取并更新
+POST /products/_search?scroll=5m
+{
+  "query": {
+    "range": {"price": {"lt": 100}}
+  },
+  "size": 1000,
+  "sort": ["_doc"]
+}
+
+# 对每批数据执行更新
+POST /_bulk
+{"update": {"_index": "products", "_id": "1"}}
+{"doc": {"status": "discounted"}}
+...
+```
+
+**场景3：数据分析**
+
+```json
+# 分批分析大量数据
+POST /logs/_search?scroll=30m
+{
+  "query": {
+    "range": {
+      "@timestamp": {
+        "gte": "2024-01-01",
+        "lte": "2024-01-31"
+      }
+    }
+  },
+  "size": 10000,
+  "sort": ["_doc"]
+}
+```
+
+#### **八、注意事项**
+
+**1. 内存管理**
+
+```json
+# 及时清理scroll上下文
+DELETE /_search/scroll
+{
+  "scroll_id": ["id1", "id2", ...]
+}
+
+# 或一次性清理所有
+DELETE /_search/scroll/_all
+```
+
+**2. 时效性限制**
+
+- 滚动查询看到的是**查询时刻的快照**
+- **新增、更新、删除的文档不会反映**在后续滚动中
+- 适合**数据导出、批量处理**等场景
+- 不适合**实时数据同步**场景
+
+**3. Search After vs Scroll**
+
+| 特性     | **Scroll**       | **Search After** |
+| -------- | ---------------- | ---------------- |
+| 实时性   | 快照数据         | 实时数据         |
+| 内存占用 | 服务端保持上下文 | 无服务端状态     |
+| 适用场景 | 数据导出         | 实时深分页       |
+| 性能     | 首次快照开销大   | 每次查询开销     |
+
+#### **九、最佳实践总结**
+
+**使用Scroll的场景**
+
+1. **数据导出**：导出大量数据到外部系统
+2. **批量处理**：分批处理大量文档
+3. **数据迁移**：迁移索引数据
+4. **离线分析**：不需要实时性的分析任务
+
+**使用Search After的场景**
+
+1. **实时深分页**：需要看到最新数据的分页
+2. **无限滚动**：移动端加载更多
+3. **实时同步**：需要看到数据变更
+
+##### **代码示例模板**
+
+```json
+# Scroll模板
+POST /{index}/_search?scroll={time}
+{
+  "query": {...},
+  "size": {batch_size},
+  "sort": ["_doc"]
+}
+
+# Search After模板  
+GET /{index}/_search
+{
+  "query": {...},
+  "size": {page_size},
+  "sort": [
+    {"timestamp": "asc"},
+    {"_id": "asc"}
+  ],
+  "search_after": [last_timestamp, last_id]
+}
+```
+
+**总结**：滚动查询是处理大量数据的有效工具，但要注意其基于快照的特性，根据实际需求在Scroll和Search After之间选择。
+
+
+
+
+
+
+
+4.1.6 搜索模板
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
