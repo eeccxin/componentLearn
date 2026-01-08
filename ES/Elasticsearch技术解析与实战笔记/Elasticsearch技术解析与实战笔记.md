@@ -3084,7 +3084,7 @@ GET /logs/_search
 }
 ```
 
-##### **方案2：Search After（ES 5.0+）** （非scroll方案）
+##### **方案2：search_after（ES 5.0+）** （非scroll方案）
 
 ```json
 # 1. 首次查询
@@ -3274,7 +3274,563 @@ GET /{index}/_search
 
 
 
+### 4.1.4 隐藏内容查询（inner_hits）
 
+在 Elasticsearch 中有**嵌套结构**和**父子结构**,在这两种结构中允许通过不同的范围查询搜 索到不同的文档。
+
+在父/子情况下,可以通过查询子文档的内容返回父文档或者通过父文档查询返回子文档;
+
+在嵌套文档情况下,可以通过嵌套内部的对象查询得到嵌套文档。 
+
+在这两种情况下,返回实际匹配的内容是隐藏的。但在有些情况下,了解实际匹配的内 容是非常有用的,这时就要用到隐藏内容 (inner hits)查询。
+
+nested 嵌套查询
+
+#### **一、核心概念**
+
+**隐藏内容查询（inner_hits）** 是 Elasticsearch 用于**揭示嵌套/父子结构中实际匹配内容**的机制。
+
+在 nested 嵌套查询或 has_child/has_parent 父子查询时，默认只返回外层文档，而 inner_hits 可以额外返回**具体命中的内部对象**。
+
+#### **二、为什么需要 inner_hits**
+
+**1. 嵌套结构的问题**
+
+- nested 对象以独立隐藏文档方式存储
+- 普通 nested 查询只返回外层文档，无法知道具体哪个内部对象匹配
+- 父子文档结构不同，但存储在同一索引中
+
+**2. inner_hits 的作用**
+
+- 显示**命中的具体嵌套对象**（在数组中的位置）
+- 支持**父子文档同时返回**，避免多次查询
+- 帮助理解**搜索结果的匹配原因**
+
+#### **三、nested 嵌套查询基础**
+
+**1. 嵌套类型定义**
+
+```bash
+PUT /my_index
+{
+  "mappings": {
+    "properties": {
+      "user": {
+        "type": "nested"
+      }
+    }
+  }
+}
+
+PUT /my_index/_doc/1
+{
+  "title": "Nested Test Document 1",
+  "user": [ //user可以是数组，es的底层特性
+    {
+      "first": "John",
+      "last": "Smith",
+      "age": 30,
+      "gender": "male",
+      "email": "john.smith@example.com"
+    },
+    {
+      "first": "Alice",
+      "last": "Johnson",
+      "age": 25,
+      "gender": "female", 
+      "email": "alice.j@example.com"
+    }
+  ],
+  "create_time": "2024-01-20T10:30:00",
+  "status": "active"
+}
+```
+
+**2. 普通 nested 查询**
+
+```json
+GET /my_index/_search
+{
+  "query": {
+    "nested": {
+      "path": "user",
+      "query": {
+        "bool": {
+          "must": [
+            { "match": { "user.first": "John" } },
+            { "match": { "user.last": "Smith" } }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+**问题**：返回整个文档，无法知道具体哪个 user 对象匹配。
+
+#### **四、inner_hits 基本用法**
+
+**1. 基本语法**
+
+```json
+GET /my_index/_search
+{
+  "query": {
+    "nested": {
+      "path": "user",
+      "query": {
+        "bool": {
+          "must": [
+            { "match": { "user.first": "John" } },
+            { "match": { "user.last": "Smith" } }
+          ]
+        }
+      },
+      "inner_hits": {}  // 关键：添加空 inner_hits
+    }
+  }
+}
+```
+
+**2. 返回结果示例**
+
+```json
+{
+  "hits": {
+    "hits": [
+      {
+        "_index": "my_index",
+        "_id": "1",
+        "_score": 1.3862942,
+        "_source": {
+          "group": "fans",
+          "user": [
+            { "first": "John", "last": "Smith", "age": "23" },
+            { "first": "Alice", "last": "White", "age": "24" }
+          ]
+        },
+        "inner_hits": {
+          "user": {
+            "hits": {
+              "total": { "value": 1, "relation": "eq" },
+              "max_score": 1.3862942,
+              "hits": [
+                {
+                  "_index": "my_index",
+                  "_id": "1",
+                  "_nested": {
+                    "field": "user",
+                    "offset": 0  // 在数组中的位置
+                  },
+                  "_score": 1.3862942,
+                  "_source": {
+                    "last": "Smith",
+                    "first": "John",
+                    "age": "23"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+**关键点**：
+
+- `inner_hits.user.hits.hits`只包含**匹配的嵌套对象**
+- `_nested.offset`显示在数组中的位置
+- `_source`只包含嵌套对象字段，不包含外层文档
+
+#### **五、inner_hits 高级配置**
+
+**1. 控制返回数量**
+
+```json
+GET /my_index/_search
+{
+  "query": {
+    "nested": {
+      "path": "user",
+      "query": { ... },
+      "inner_hits": {
+        "size": 5,      // 最多返回5个匹配对象
+        "from": 0       // 从第0个开始
+      }
+    }
+  }
+}
+```
+
+**2. 排序控制**
+
+```json
+GET /my_index/_search
+{
+  "query": {
+    "nested": {
+      "path": "user",
+      "query": { ... },
+      "inner_hits": {
+        "sort": [
+          { "user.age": { "order": "desc" } } //数组中的item潘旭
+        ]
+      }
+    }
+  }
+}
+```
+
+**3. 字段过滤**
+
+```json
+GET /my_index/_search
+{
+  "query": {
+    "nested": {
+      "path": "user",
+      "query": { ... },
+      "inner_hits": {
+        "_source": false,  // 不返回 _source
+        "fields": ["user.first", "user.last"]  // 只返回指定字段
+      }
+    }
+  }
+}
+```
+
+**4. 命名 inner_hits**
+
+```json
+GET /my_index/_search
+{
+  "query": {
+    "nested": {
+      "path": "user",
+      "query": { ... },
+      "inner_hits": {
+        "name": "matched_users"  // 自定义名称
+      }
+    }
+  }
+}
+```
+
+返回结果中会显示为 `inner_hits.matched_users`。
+
+#### **六、父子文档 inner_hits**
+
+##### **6.1 父子文档 介绍**
+
+**父子文档**是Elasticsearch中一种**文档关联模型**，允许在同一个索引中建立**一对多关系**。具体来说：
+
+**核心概念**
+
+**父文档**：代表主实体（如问题、订单、用户）
+
+**子文档**：代表从属实体（如回答、订单项、用户地址）
+
+**关键特性**
+
+1. **同一索引存储**：父子文档存储在同一个索引的不同类型中（ES 6.x及之前）或同一索引中（ES 7.x+）
+2. **独立存储**：每个文档都是独立的Lucene文档，有自己的_id
+3. **关联机制**：通过`_routing`和`parent`字段建立关联
+4. **查询能力**：支持`has_child`（通过子查父）和`has_parent`（通过父查子）查询
+
+**与nested的区别**
+
+| 特性     | **父子文档**     | **nested对象**           |
+| -------- | ---------------- | ------------------------ |
+| 存储方式 | 独立文档         | 隐藏文档，与父文档同存储 |
+| 更新性能 | 可单独更新子文档 | 更新需重写整个父文档     |
+| 查询性能 | 关联查询开销较大 | 查询性能更好             |
+| 适用场景 | 子文档频繁更新   | 子文档不常更新           |
+
+**实际应用场景**
+
+- 问题-回答系统（问题为父，回答为子）
+- 订单-订单项
+- 用户-用户地址
+- 博客-评论
+
+**注意**：ES 6.x之后官方推荐使用`join`字段替代传统的父子文档，但底层原理类似。
+
+##### 6.2 父子文档示例
+
+创建父子文档需要三步：**定义join字段映射 → 插入父文档 → 插入子文档**。以下是完整示例：
+
+**1. 定义索引映射（join字段）**
+
+```json
+PUT /blog_posts
+{
+  "mappings": {
+    "properties": {
+      "title": { "type": "text" },
+      "content": { "type": "text" },
+      "blog_comments_relation": {
+        "type": "join",
+        "relations": {
+          "blog": "comment"
+        }
+      }
+    }
+  }
+}
+```
+
+- `blog_comments_relation`：自定义join字段名
+- `relations`：定义父子关系，`"blog": "comment"`表示blog为父，comment为子
+
+**2. 插入父文档**
+
+```json
+PUT /blog_posts/_doc/blog1
+{
+  "title": "Elasticsearch 7 新特性",
+  "content": "Elasticsearch 7 引入了很多新功能...",
+  "blog_comments_relation": {
+    "name": "blog"
+  }
+}
+```
+
+- `name: "blog"`：声明该文档为父文档（对应mapping中的父名）
+
+**3. 插入子文档**
+
+```json
+PUT /blog_posts/_doc/comment1?routing=blog1
+{
+  "user": "user1",
+  "message": "Great article!",
+  "created_at": "2024-01-01T10:00:00",
+  "blog_comments_relation": {
+    "name": "comment",
+    "parent": "blog1"
+  }
+}
+```
+
+- `routing=blog1`：**关键参数**，确保父子文档在同一分片
+- `name: "comment"`：声明为子文档
+- `parent: "blog1"`：指定父文档ID
+
+**4. 验证父子关系**
+
+```json
+GET /blog_posts/_search
+{
+  "query": {
+    "has_child": {
+      "type": "comment",
+      "query": {
+        "match": { "user": "user1" }
+      }
+    }
+  }
+}
+```
+
+- 返回包含user1评论的博客文章（父文档）
+
+```
+GET /blog_posts/_search
+{
+  "query": {
+    "has_parent": {
+      "parent_type": "blog",
+      "query": {
+        "match": {  "title": "Elasticsearch 7 新特性" }
+      }
+    }
+  }
+}
+```
+
+- 查询包含父文档的子文档
+
+
+
+**关键注意事项**
+
+1. **同一分片**：父子文档必须通过`routing`参数确保在同一分片，否则查询会失败
+2. **join字段限制**：每个索引只能有一个join字段，但支持多级父子关系
+3. **性能影响**：`has_child`/`has_parent`查询比普通查询慢，建议只在子文档数量远大于父文档时使用
+
+
+
+##### 6.3  inner_hits
+
+###### **1. has_child + inner_hits**
+
+```json
+POST /test_doctor/_search
+{
+  "query": {
+    "has_child": {
+      "type": "answer",
+      "query": {
+        "match": { "name": "张三" }
+      },
+      "inner_hits": {}  // 同时返回父子数据
+    }
+  }
+}
+```
+
+###### **2. 返回结果结构**
+
+```json
+{
+  "hits": {
+    "hits": [
+      {
+        "_index": "test_doctor",
+        "_id": "1",
+        "_score": 1.0,
+        "_source": { ... },
+        "inner_hits": {
+          "answer": {
+            "hits": {
+              "hits": [
+                {
+                  "_index": "test_doctor",
+                  "_id": "2",
+                  "_score": 1.0,
+                  "_source": {
+                    "name": "张三",
+                    ...
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+**优势**：一次查询同时获取父文档和匹配的子文档，避免多次查询。
+
+#### **七、性能注意事项**
+
+**1. 内存消耗**
+
+- 每个 nested 对象都作为独立文档存储
+- 100 个 user 对象 → 101 个 Lucene 文档
+- inner_hits 需要解析根文档的 _source，性能开销较大
+
+**2. 使用建议**
+
+- 合理设置 `size`和 `from`，避免返回过多数据
+- 必要时关闭 `_source`或使用字段过滤
+- 避免在大量数据上频繁使用 inner_hits
+
+#### **八、完整 Kibana 示例**
+
+**1. 创建索引**
+
+```json
+PUT /blog_posts
+{
+  "mappings": {
+    "properties": {
+      "title": { "type": "text" },
+      "content": { "type": "text" },
+      "comments": {
+        "type": "nested",
+        "properties": {
+          "user": { "type": "keyword" },
+          "message": { "type": "text" },
+          "created_at": { "type": "date" }
+        }
+      }
+    }
+  }
+}
+```
+
+**2. 插入测试数据**
+
+```json
+POST /blog_posts/_doc/1
+{
+  "title": "Elasticsearch 7 新特性",
+  "content": "Elasticsearch 7 引入了很多新功能...",
+  "comments": [
+    {
+      "user": "user1",
+      "message": "Great article!",
+      "created_at": "2024-01-01T10:00:00"
+    },
+    {
+      "user": "user2", 
+      "message": "Very helpful, thanks!",
+      "created_at": "2024-01-02T14:30:00"
+    }
+  ]
+}
+```
+
+**3. 使用 inner_hits 查询**
+
+```json
+GET /blog_posts/_search
+{
+  "query": {
+    "nested": {
+      "path": "comments",
+      "query": {
+        "bool": {
+          "must": [
+            { "match": { "comments.user": "user1" } },
+            { "match": { "comments.message": "Great" } }
+          ]
+        }
+      },
+      "inner_hits": {
+        "size": 10,
+        "sort": [
+          { "comments.created_at": { "order": "desc" } }
+        ]
+      }
+    }
+  }
+}
+```
+
+**返回结果**：
+
+- 外层文档：完整的博客文章
+- `inner_hits.comments.hits.hits`：只包含匹配的评论对象
+- 可以清楚看到具体哪个评论匹配了查询条件
+
+#### **九、总结**
+
+**inner_hits 的核心价值**：
+
+- **揭示匹配原因**：显示具体哪个嵌套对象/子文档匹配
+- **减少查询次数**：父子文档一次查询同时返回
+- **调试便利**：帮助理解复杂查询的匹配逻辑
+
+**适用场景**：
+
+- 需要知道具体匹配的嵌套对象
+- 父子文档需要同时展示
+- 调试复杂查询的匹配结果
+
+**注意事项**：
+
+- 性能开销较大，需合理使用
+- 控制返回数量和字段
+- 避免在大量数据上频繁使用
 
 
 
