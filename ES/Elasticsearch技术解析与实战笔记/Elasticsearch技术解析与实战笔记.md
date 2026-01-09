@@ -3834,9 +3834,485 @@ GET /blog_posts/_search
 
 
 
-4.1.6 搜索模板
+### 4.1.5 搜索相关函数
+
+Elasticsearch 提供了很多实用的函数来更加方便地满足不同的场景需求。
+
+```
+1.Preference
+2. 索引加权 index_boost
+3. 最小分值 min_score
+4. 分值解释 explain
+5. 分片情况查询 search_shards 
+6. 总数查询 _count
+7. 是否存在查询  当设置 size 为0 和 terminate after 为1的时候可以验证查询是否有结果存在,
+8. 验证接口 _validate
+9. 字段状态查询 _field_stats
+这些实用函数覆盖了查询路由、相关性控制、性能优化、调试验证等核心场景，合理使用可以显著提升搜索性能和开发效率。
+```
+
+#### 1. Preference（查询偏好）
+
+**作用**：控制搜索请求由哪些分片或节点处理，解决"bouncing results"问题（结果震荡, 同一查询在不同分片返回不同排序）。
+
+**bouncing results 产生原因**：当多个文档的排序字段值相同时（如相同时间戳），不同分片或副本分片可能对这些文档采用不同的内部排序规则。由于ES默认在有效分片副本间轮询处理请求，每次请求可能命中不同的分片，从而得到不同的排序结果。
+
+**常用值**：
+
+- `_primary`：只在主分片执行
+- `_local`：优先在当前节点分片执行
+- 自定义字符串（如用户会话ID）：固定路由到同一分片
+
+**Kibana 示例**：
+
+```json
+GET /my_index/_search?preference=user_123
+{
+  "query": {
+    "match": {
+      "title": "elasticsearch"
+    }
+  },
+  "sort": [
+    { "timestamp": { "order": "desc" } }
+  ]
+}
+
+// 搜索请求示例
+GET /my_index/_search?preference=_primary
+{
+  "query": {
+    "match_all": {}
+  },
+  "sort": [
+    {"timestamp": "desc"}
+  ]
+}
+```
+
+#### 2. 索引加权 indices_boost
+
+**作用**：在跨索引搜索时为不同索引设置权重，提升重要索引的文档得分。
+
+**Kibana 示例**：
+
+```json
+GET /logs_2024_*,logs_2023_*/_search
+{
+  "indices_boost": [
+    { "logs_2024_*": 2.0 },  // 2024年日志权重加倍
+    { "logs_2023_*": 1.0 }
+  ],
+  "query": {
+    "match": {
+      "message": "error"
+    }
+  }
+}
+```
+
+#### 3. 最小分值 min_score
+
+**作用**：过滤掉得分低于指定阈值的文档，不参与最终结果。
+
+**Kibana 示例**：
+
+```json
+GET /products/_search
+{
+  "query": {
+    "match": {
+      "description": "elasticsearch"
+    }
+  },
+  "min_score": 1.5,  // 只返回得分>=1.5的文档
+  "sort": [
+    { "_score": { "order": "desc" } }
+  ]
+}
+```
+
+#### 4. 分值解释 explain
+
+**作用**：显示文档得分的详细计算过程，帮助调试相关性。
+
+**Kibana 示例**：
+
+```json
+GET /my_index/_search
+{
+  "query": {
+    "match": {
+      "title": "elasticsearch"
+    }
+  },
+  "explain": true,  // 开启评分解释
+  "size": 1
+}
+
+会在hits.hits._explanation中返回信息
+```
+
+<img src="Elasticsearch技术解析与实战笔记.assets/image-20260109122239049.png" alt="image-20260109122239049" style="zoom:50%;" />
 
 
+
+#### 5. 分片情况查询 _search_shards
+
+**作用**：查看查询将涉及哪些分片，用于调试和优化。
+
+**Kibana 示例**：
+
+```json
+GET /my_index/_search_shards
+{
+  "query": {
+    "match": {
+      "title": "elasticsearch"
+    }
+  }
+}
+```
+
+<img src="Elasticsearch技术解析与实战笔记.assets/image-20260109122408987.png" alt="image-20260109122408987" style="zoom:50%;" />
+
+#### 6. 总数查询 _count
+
+**作用**：快速统计匹配查询条件的文档总数，比_search更轻量。
+
+**Kibana 示例**：
+
+```json
+GET /logs/_count
+{
+  "query": {
+    "range": {
+      "@timestamp": {
+        "gte": "now-1d"
+      }
+    }
+  }
+}
+```
+
+
+
+#### 7. 存在性查询（size=0 + terminate_after=1）
+
+**作用**：快速判断是否有匹配文档，不返回实际数据。
+
+**Kibana 示例**：
+
+```json
+GET /my_index/_search
+{
+  "query": {
+    "term": {
+      "username": "john"
+    }
+  },
+  "size": 0,            // 不返回文档
+  "terminate_after": 1  // 每分片找到1条就停止
+}
+```
+
+
+
+#### 8. 验证语法 _validate
+
+**作用**：验证查询语法是否合法，不实际执行查询。
+
+**Kibana 示例**：
+
+```json
+POST /my_index/_validate/query
+{
+  "query": {
+    "range": {
+      "price": {
+        "gte": 100,
+        "lte": 200
+      }
+    }
+  }
+}
+```
+
+
+
+#### 9. 字段状态查询  _field_caps 
+
+**作用**：获取字段的统计信息（文档数、最大值、最小值等）。
+
+**Kibana 示例**：
+
+```json
+# es 7.0 
+GET /my_index/_field_caps?fields=title
+==》
+{
+  "indices" : [
+    "my_index"
+  ],
+  "fields" : {
+    "title" : {
+      "keyword" : {
+        "type" : "keyword",
+        "searchable" : true,
+        "aggregatable" : true
+      }
+    }
+  }
+}
+
+
+# 旧版本 _field_stats
+GET /logs/_field_stats?fields=title
+{
+  "level": "cluster"
+}
+==》
+{
+    "shards": {
+        "total": 5,
+        "successful": 5,
+        "failed": 0
+    },
+    "indices": {
+        "_all": {
+            "fields": {
+                "state": {
+                    "max_doc": 5,
+                    "doc_count": 5,
+                    "density": 100,
+                    "sum_doc_freq": 5,
+                    "sum total_term_freq": 5,
+                    "min_value": "close",
+                    "max value": "open"
+                }
+            }
+        }
+    }
+}
+
+```
+
+
+
+### 4.1.6 搜索模板
+
+#### 一、搜索模板是什么
+
+**搜索模板**是Elasticsearch提供的**DSL模板化机制**，使用Mustache模板语言预定义查询结构，执行时通过参数替换生成完整DSL。
+
+核心价值在于：将查询逻辑与应用程序代码解耦，实现查询的复用、统一管理和灵活调整。
+
+对模板的使用有三种方式: 
+
+- 直接在请求体中使用脚本。 (Inline Template)
+- 把脚本存储在索引中,通过引用脚本id 来使用。 
+- 把脚本存储在本地磁盘中,默认的位置为: elasticsearch\config\scripts,通过引用脚本名称进行使用。 
+
+
+
+#### 二、Mustache模板语法基础
+
+搜索模板使用`{{参数名}}`作为占位符，支持：
+
+- **变量替换**：`{{field}}`、`{{value}}`
+- **JSON序列化**：`{{#toJson}}array{{/toJson}}`将数组转为JSON格式
+- **条件判断**：`{{#condition}}...{{/condition}}`
+
+#### 三、三种使用方式
+
+**1. 请求体中直接使用脚本（Inline Template）**
+
+**特点**：无需存储，直接在请求中定义模板,在source字段中定义查询
+
+```json
+GET /my_index/_search/template
+{
+  "source": {
+    "query": {
+      "match": {
+        "{{field}}": "{{value}}"
+      }
+    }
+  },
+  "params": {
+    "field": "title",
+    "value": "Nested"
+  }
+}
+
+GET /my_index/_search/template
+{
+  "source": {
+    "query": {
+      "match": {
+        "{{field}}": "{{value}}"
+      }
+    }
+  },
+  "params": {
+    "field": "title",
+    "value": "Nested"
+  }
+}
+
+```
+
+**2. 存储在索引中（Stored Template）**
+
+**特点**：通过`_scripts`  API管理，可复用
+
+**创建模板**：
+
+```json
+POST _scripts/my_search_template
+{
+  "script": {
+    "lang": "mustache",
+    "source": {
+      "query": {
+        "match": {
+          "{{field}}": "{{value}}"
+        }
+      }
+    }
+  }
+}
+```
+
+**使用模板**：
+
+```json
+GET /my_index/_search/template
+{
+  "id": "my_search_template",
+  "params": {
+    "field": "title",
+    "value": "Nested"
+  }
+}
+```
+
+
+
+**3. 存储在本地磁盘（File-based Template）**
+
+**特点**：模板文件存储在`elasticsearch/config/scripts/`目录，通过文件名引用
+
+**文件路径**：`config/scripts/my_template.mustache`
+
+**文件内容**：
+
+```json
+{
+  "query": {
+    "match": {
+      "{{field}}": "{{value}}"
+    }
+  }
+}
+```
+
+**使用方式**：
+
+```json
+GET /my_index/_search/template
+{
+  "id": "my_template",
+  "params": {
+    "field": "title",
+    "value": "Elasticsearch"
+  }
+}
+```
+
+#### 四、模板渲染与调试
+
+使用`_render/template`API预览模板渲染结果：
+
+```json
+GET _render/template
+{
+  "source": {
+    "query": {
+      "match": {
+        "{{field}}": "{{value}}"
+      }
+    }
+  },
+  "params": {
+    "field": "title",
+    "value": "Elasticsearch"
+  }
+}
+```
+
+返回渲染后的完整DSL，便于调试。
+
+
+
+#### 五、模板调试工具
+
+_render/template是 Elasticsearch 提供的模板调试工具，用于预览 Mustache 模板渲染后的完整 DSL，无需实际执行查询。核心作用是验证模板语法是否正确、参数替换是否符合预期。
+
+**核心功能**
+1.语法验证：检查 Mustache 模板语法是否正确
+2.参数预览：查看参数替换后的完整查询 DSL
+3.调试辅助：快速定位模板渲染问题
+
+
+
+示例：
+
+```bash
+GET _render/template
+{
+  "source": {
+    "query": {
+      "match": {
+        "{{field}}": "{{value}}"
+      }
+    }
+  },
+  "params": {
+    "field": "title",
+    "value": "Elasticsearch"
+  }
+}
+
+
+{
+  "template_output": {
+    "query": {
+      "match": {
+        "title": "Elasticsearch"
+      }
+    }
+  }
+}
+```
+
+
+
+
+
+#### 六、核心优势
+
+1. **代码解耦**：查询逻辑与业务代码分离，便于维护
+2. **灵活调整**：修改模板无需重新部署应用
+3. **性能优化**：模板**可预编译，提升查询性能**
+4. **统一管理**：集中管理所有查询逻辑
+
+#### 七、最佳实践
+
+- 为常用查询创建模板，避免重复编写DSL
+- 使用`_render/template`调试模板语法
+- 合理命名模板，便于团队协作
+- 定期清理不再使用的模板
 
 
 
@@ -3886,9 +4362,632 @@ GET /blog_posts/_search
 
 > DSL (Domain-specific Language）
 
+### 4.2.1 查询和过滤的区别
+
+Elasticsearch 提供了基于JSON 的完整查询 DSL 来定义查询。
+
+查询 DSL 包括两种子句: 
+
+- 叶查询子句:在特定的字段上查找特定的值,比如 match、term 或者 range 查询。这 些查询可以自己使用。 
+- 复合查询子句:包含其他叶查询或复合查询子句,以合理的方式结合多条查询(比如 bool 或 dis_max 查询),或者改变查询行为(比如 not 或 constant_score 查询)。 
+
+
+
+**查询(query)**
+
+用于检查内容与条件是否匹配,并且**计算_score 元字段表示匹配度**。 查询的结构中以 query 参数开始来执行内容查询。 
+
+最简单的查询,匹配所有文档,文档的_score 值是 1.0 { "match_all": {} } 可以使用 boost 参数修改 score 值: { "match_all": { "boost" : 1.2 }}
+
+```
+GET /my_index/_search
+{
+  "query": {
+    "match_all": {
+      "boost": 1.2
+    }
+  }
+}
+```
+
+
+
+**过滤(filter)**
+
+不计算匹配得分,只是简单地决定文档是否匹配。内容过滤主要用于过滤结构化的数据。 使用过滤往往会被 Elasticsearch 自动缓存来提高性能。 查询的子句也可以传递 filter 参数,比如bool 查询内的filter、constant_score 查询内的 filter 参数等。
+
+
+
+
+
+### 4.2.2 全文搜索（Full-text）
+
+全文搜索是在**文本字段**上执行的搜索，在执行查询之前,要了解被查询字段的分词方式,在查询 字符串上应用每个被查询字段的映射分词器(或搜索分词器)。核心特点：
+
+- 自动**分词**（对查询字符串应用字段的分词器）
+- 计算**相关性评分**（基于TF-IDF/BM25算法）
+- 支持**模糊匹配**、**同义词**、**短语匹配**等
+
+**标准查询**
+
+接受文本/数字/日期的查询,分析参数并组成查询条件。有三种类型的match 查询:布尔(boolean)、短语(phrase)和短语前缀(phrase prefix)。
+
+除此之外还有多段查询、Lucene 语法查询、简化查询。下面分别介绍。
+
+
+
+#### **1. 标准查询（match query）**
+
+**1.1 布尔匹配（boolean）**
+
+**原理**：对查询词分词，各词项以OR/AND关系匹配
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "match": {
+      "eventName": {
+        "query": "linux login",
+        "operator": "and"  // 可改为"or"（默认）
+      }
+    }
+  }
+}
+
+==》简写：
+GET /secisland/_search
+{
+  "query": {
+    "match": {
+      "eventName": "linux login"
+    }
+  }
+}
+```
+
+**1.2 短语匹配（match_phrase）**
+
+**原理**：词项必须**按顺序**全部出现，且位置相邻
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "match_phrase": {
+       "eventName": {
+            "query": "linux event",
+            "slop": 1  # 允许中间间隔1个词， 默认0（必须相邻）
+      }
+    }
+  }
+}
+```
+
+**1.3 短语前缀（match_phrase_prefix）**
+
+**原理**：最后词项支持通配符匹配
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "match_phrase_prefix": {
+      "eventName": "linux log"  // 匹配"linux login"/"linux log"等
+    }
+  }
+}
+```
+
+
+
+#### **2. 多字段查询（multi_match）**
+
+在多个字段上执行相同搜索：
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "linux",
+      "fields": ["eventName^3", "description^2", "tags"],  // ^表示权重
+      "type": "best_fields"  // 可选：best_fields/most_fields/cross_fields/phrase/phrase_prefix
+    }
+  }
+}
+```
+
+**类型对比总结**
+
+| 类型              | 评分策略         | 适用场景       |
+| ----------------- | ---------------- | -------------- |
+| **best_fields**   | 取单个字段最高分 | 字段互为同义词 |
+| **most_fields**   | 所有字段得分相加 | 字段内容互补   |
+| **cross_fields**  | 视为虚拟大字段   | 字段内容分散   |
+| **phrase**        | 每个字段短语匹配 | 需要严格短语   |
+| **phrase_prefix** | 每个字段前缀短语 | 前缀自动补全   |
+
+**实际选择建议**
+
+- **默认使用**：`best_fields`（性能最好，符合直觉）
+- **多字段内容**：`most_fields`（如标题+正文+标签）
+- **字段高度相关**：`cross_fields`（如姓名拆分）
+- **短语搜索**：`phrase`或 `phrase_prefix`（如搜索框输入完整短语）
+
+**核心要点**：`type`决定了多个字段匹配结果的**评分合并逻辑**，直接影响排序结果。
+
+
+
+##### **type 参数详解**
+
+`type`参数控制多个字段的**评分合并策略**，决定了最终相关性得分的计算方式。ES 7 支持 5 种类型：
+
+**1. best_fields（默认）**
+
+**原理**：取**单个字段的最高分**作为文档最终得分
+
+**适用场景**：多个字段是"同义词"关系，只需一个字段匹配即可
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "linux",
+      "fields": ["eventName^3", "description^2", "tags"],
+      "type": "best_fields"
+    }
+  }
+}
+```
+
+**示例说明**：
+
+- 文档A：eventName 得分 2.5，description 得分 1.8，tags 得分 0.5 → **最终得分 2.5**
+- 文档B：eventName 得分 1.2，description 得分 2.1，tags 得分 0.3 → **最终得分 2.1**
+
+**2. most_fields**
+
+**原理**：将**所有字段的得分相加**作为最终得分
+
+**适用场景**：多个字段是"互补"关系，匹配字段越多越相关
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "linux",
+      "fields": ["eventName^3", "description^2", "tags"],
+      "type": "most_fields"
+    }
+  }
+}
+```
+
+**示例说明**：
+
+- 文档A：eventName 得分 2.5，description 得分 1.8，tags 得分 0.5 → **最终得分 4.8**
+- 文档B：eventName 得分 1.2，description 得分 2.1，tags 得分 0.3 → **最终得分 3.6**
+
+
+
+**3. cross_fields**
+
+**原理**：将多个字段视为**一个虚拟大字段**，统一计算得分。
+
+**实现方式**：
+
+- 将 `eventName`、`description`、`tags`三个字段的内容**拼接成一个虚拟字段**
+- 在这个虚拟字段上执行**一次查询计算**
+- 得到**统一的相关性得分**
+
+**适用场景**：字段内容分散（如姓名拆分为 first_name + last_name）
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "linux",
+      "fields": ["eventName^3", "description^2", "tags"],
+      "type": "cross_fields"
+    }
+  }
+}
+```
+
+**特点**：
+
+- 避免"词项分散"问题（一个词在多个字段出现时得分过高）
+- 适合（多）字段内容高度相关的场景
+
+
+
+**"字段内容分散"场景**：
+
+- 文档A：`eventName: "linux"`, `description: "login"`, `tags: "system"`
+- 文档B：`eventName: "linux login system"`
+
+**传统方式的问题**：
+
+- 文档A：每个字段只匹配一个词，得分都很低
+- 文档B：eventName 字段匹配三个词，得分很高
+- 但**实际相关性**：文档A 和文档B 都包含三个关键词
+
+**cross_fields 的优势**：
+
+- 将三个字段视为一个整体：`"linux login system"`
+- 两个文档的**虚拟字段内容相同**
+- 得分**完全一致**，更符合语义相关性
+
+
+
+**4. phrase**
+
+**原理**：在每个字段上执行 `match_phrase`查询，取最高分
+
+**适用场景**：需要**短语匹配**，且词项必须相邻
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "linux login",
+      "fields": ["eventName^3", "description^2", "tags"],
+      "type": "phrase"
+    }
+  }
+}
+```
+
+**匹配规则**：
+
+- 文档必须包含完整短语"linux login"（按顺序相邻）
+- 类似在每个字段上执行 `match_phrase`查询
+
+
+
+**5. phrase_prefix**
+
+**原理**：在每个字段上执行 `match_phrase_prefix`查询，取最高分
+
+**适用场景**：支持**前缀通配符**的短语匹配
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "linux log",
+      "fields": ["eventName^3", "description^2", "tags"],
+      "type": "phrase_prefix"
+    }
+  }
+}
+```
+
+**匹配规则**：
+
+- 匹配"linux login"、"linux log"等
+- 最后词项支持通配符匹配
+
+
+
+
+
+#### **3. 查询字符串查询（query_string）**
+
+支持**Lucene查询语法**：
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "query_string": {
+      "query": "(linux OR windows) AND event",
+      "default_field": "eventName",
+      "analyzer": "standard"
+    }
+  }
+}
+```
+
+<img src="Elasticsearch技术解析与实战笔记.assets/image-20260109174422868.png" alt="image-20260109174422868" style="zoom:50%;" />
+
+##### **Lucene 查询语法示例**
+
+**1. 布尔运算符**
+
+```json
+GET /logs/_search
+{
+  "query": {
+    "query_string": {
+      "query": "(error OR exception) AND NOT timeout",
+      "default_field": "message"
+    }
+  }
+}
+```
+
+**2. 字段指定搜索**
+
+```json
+GET /logs/_search
+{
+  "query": {
+    "query_string": {
+      "query": "level:ERROR AND message:\"connection failed\""
+    }
+  }
+}
+```
+
+**3. 通配符搜索**
+
+```json
+GET /products/_search
+{
+  "query": {
+    "query_string": {
+      "query": "name:elas*",
+      "allow_leading_wildcard": true
+    }
+  }
+}
+```
+
+**4. 模糊搜索**
+
+```json
+GET /users/_search
+{
+  "query": {
+    "query_string": {
+      "query": "name:john~",
+      "fuzziness": "AUTO"
+    }
+  }
+}
+```
+
+**5. 范围搜索**
+
+```json
+GET /logs/_search
+{
+  "query": {
+    "query_string": {
+      "query": "timestamp:[2024-01-01 TO 2024-01-31]"
+    }
+  }
+}
+```
+
+**关键参数详解**
+
+| 参数                     | 说明         | Kibana示例                      |
+| ------------------------ | ------------ | ------------------------------- |
+| **default_operator**     | 默认运算符   | `"default_operator": "AND"`     |
+| **analyzer**             | 指定分词器   | `"analyzer": "standard"`        |
+| **lenient**              | 忽略格式错误 | `"lenient": true`               |
+| **fuzziness**            | 模糊匹配度   | `"fuzziness": "AUTO"`           |
+| **phrase_slop**          | 短语容差     | `"phrase_slop": 2`              |
+| **minimum_should_match** | 最小匹配数   | `"minimum_should_match": "75%"` |
+
+示例：
+
+```bash
+# 1. 创建测试数据
+PUT /logs/_doc/1
+{
+  "level": "ERROR",
+  "message": "connection timeout to database",
+  "timestamp": "2024-01-15T10:00:00"
+}
+
+PUT /logs/_doc/2
+{
+  "level": "WARN", 
+  "message": "slow query detected",
+  "timestamp": "2024-01-15T11:00:00"
+}
+
+# 2. 复杂查询示例
+GET /logs/_search
+{
+  "query": {
+    "query_string": {
+      "query": "(level:ERROR OR level:WARN) AND timestamp:[2024-01-15 TO 2024-01-16]",
+      "default_field": "message",
+      "default_operator": "AND",
+      "allow_leading_wildcard": false,
+      "lenient": true,
+      "fuzziness": "AUTO",
+      "phrase_slop": 0
+    }
+  }
+}
+```
+
+
+
+#### **4. 简易字符串查询（simple_query_string）**
+
+更安全、限制更多的query_string版本：
+
+```json
+GET /secisland/_search
+{
+  "query": {
+    "simple_query_string": {
+      "query": "linux +login -error",
+      "fields": ["eventName"]
+    }
+  }
+}
+// 操作符：+必须包含，-必须不包含，~模糊搜索
+```
+
+
+
+#### **5. 完整Kibana示例**
+
+```json
+# 1. 创建索引
+PUT /logs
+{
+  "mappings": {
+    "properties": {
+      "eventName": {
+        "type": "text",
+        "analyzer": "standard"
+      },
+      "description": {
+        "type": "text",
+        "analyzer": "english"
+      }
+    }
+  }
+}
+
+# 2. 插入数据
+PUT /logs/_doc/1
+{
+  "eventName": "linux login event",
+  "description": "User login to linux system"
+}
+
+PUT /logs/_doc/2
+{
+  "eventName": "windows login failed",
+  "description": "User failed to login windows system"
+}
+
+# 3. 布尔匹配示例
+GET /logs/_search
+{
+  "query": {
+    "match": {
+      "eventName": {
+        "query": "linux login",
+        "operator": "and"
+      }
+    }
+  }
+}
+
+# 4. 短语匹配示例
+GET /logs/_search
+{
+  "query": {
+    "match_phrase": {
+      "eventName": "linux login"
+    }
+  }
+}
+
+# 5. 多字段权重搜索
+GET /logs/_search
+{
+  "query": {
+    "multi_match": {
+      "query": "login system",
+      "fields": ["eventName^3", "description^2"],
+      "type": "best_fields"
+    }
+  },
+  "highlight": {
+    "fields": {
+      "eventName": {},
+      "description": {}
+    }
+  }
+}
+```
+
+#### **6. 核心参数说明**
+
+| 参数              | 说明                                    | 适用查询            |
+| ----------------- | --------------------------------------- | ------------------- |
+| **analyzer**      | 指定分词器                              | match/match_phrase  |
+| **operator**      | 逻辑运算符（and/or）                    | match               |
+| **slop**          | 词项间允许的最大间隔                    | match_phrase        |
+| **fuzziness**     | 模糊匹配度 （ "AUTO"  // 支持拼写容错） | match               |
+| **prefix_length** | 通配符最小长度                          | match_phrase_prefix |
+
+
+
+
+
+
+
+
+
+4.2.3 字段查询
+
 
 
 4.2.4 复合查询
+
+
+
+4.2.5 连接查询
+
+
+
+4.2.6 地理查询
+
+
+
+4.2.7 跨度查询
+
+
+
+4.2.8 高亮显示
+
+
+
+4.3 简化查询 （_cat）
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
